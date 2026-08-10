@@ -9,7 +9,8 @@ const nextConfig = {
   },
   experimental: {
     serverActions: {
-      allowedOrigins: ['localhost:3000']
+      // 允许 Vercel 部署域名和本地开发域名
+      allowedOrigins: ['localhost:3000', '*.vercel.app']
     }
   }
 }

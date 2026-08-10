@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import {
@@ -29,6 +29,9 @@ import {
   type ReimbursementStatus,
 } from '@/lib/reimbursements'
 import type { ExpenseCategory } from '@/lib/api'
+import { useAuthStore } from '@/lib/auth'
+import { hasPermission, ROLES, type Role } from '@/lib/rbac'
+import { ShieldCheck, Lock, ShieldAlert } from 'lucide-react'
 
 const CATEGORY_LABEL: Record<ExpenseCategory, string> = {
   travel: '差旅住宿', transport: '交通出行', meal: '餐饮',
@@ -45,7 +48,18 @@ type PendingRow = ReturnType<typeof generatePendingApproval>[number]
 
 export default function PendingApprovalPage() {
   const router = useRouter()
+  const { user } = useAuthStore()
+  const [mounted, setMounted] = useState(false)
+  useEffect(() => { setMounted(true) }, [])
+  const role = (user?.role as Role) || 'employee'
+  const roleInfo = ROLES[role] || ROLES.employee
   const all = useMemo(() => generatePendingApproval(32), [])
+
+  // --- 权限拦截：员工无权访问审批页 ---
+  const canViewApprovals = hasPermission(role, 'approval:view')
+  const canApprove = hasPermission(role, 'approval:approve')
+  // 终审权限：仅管理员
+  const canFinalApprove = role === 'admin'
 
   const [filter, setFilter] = useState<ApprovalFilter>('all')
   const [type, setType] = useState('all')
@@ -177,12 +191,35 @@ export default function PendingApprovalPage() {
 
   return (
     <div className="max-w-7xl mx-auto space-y-5 pb-12">
+      {/* === SSR 水合前 loading（避免服务端 user 为 null 误判为员工）=== */}
+      {!mounted ? (
+        <div className="flex items-center justify-center py-20">
+          <Clock className="w-6 h-6 text-brand-500 animate-spin mr-2" />
+          <span className="text-slate-500 dark:text-slate-400">加载审批中心...</span>
+        </div>
+      ) : !canViewApprovals ? (
+        <NoPermissionPanel role={role} roleInfo={roleInfo} />
+      ) : (
+        <>
       {/* 顶部 */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
-          <h1 className="text-xl sm:text-2xl font-bold text-slate-900 dark:text-white">待我审批</h1>
+          <h1 className="text-xl sm:text-2xl font-bold text-slate-900 dark:text-white flex items-center gap-2">
+            待我审批
+            <span
+              className={`px-2 py-0.5 text-xs font-medium rounded-full ${
+                role === 'admin'
+                  ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300'
+                  : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300'
+              }`}
+            >
+              {roleInfo.label}
+            </span>
+          </h1>
           <p className="text-sm text-slate-500 dark:text-slate-400">
-            请及时处理待审批单据，超时将自动触发升级提醒
+            {role === 'admin'
+              ? '你拥有终审权限，可处理所有节点的审批单据'
+              : '请及时处理待审批单据，超时将自动触发升级提醒'}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -435,18 +472,53 @@ export default function PendingApprovalPage() {
                 {/* 操作 */}
                 <div className="md:text-right">
                   <div className="flex md:inline-flex md:items-center md:justify-end flex-wrap items-center gap-2">
-                    <button
-                      onClick={() => singleApprove(r)}
-                      className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-lg text-white bg-green-600 hover:bg-green-700 shadow shadow-green-600/20"
-                    >
-                      <CheckCircle2 className="w-4 h-4" /> 同意
-                    </button>
-                    <button
-                      onClick={() => { setSingleRejectId(r.id); setRejectReason('') }}
-                      className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-lg text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20 border border-red-100 dark:border-red-800 hover:bg-red-100 dark:hover:bg-red-900/30"
-                    >
-                      <XCircle className="w-4 h-4" /> 驳回
-                    </button>
+                    {(() => {
+                      const isFinalStep = r.currentStep >= r.totalSteps
+                      // 财务在终审节点：仅查看，不可操作
+                      if (isFinalStep && !canFinalApprove) {
+                        return (
+                          <span className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-lg text-slate-500 bg-slate-100 dark:bg-slate-800 dark:text-slate-400">
+                            <Lock className="w-3.5 h-3.5" /> 等待管理员终审
+                          </span>
+                        )
+                      }
+                      // 管理员在终审节点：显示「终审通过」按钮
+                      if (isFinalStep && canFinalApprove) {
+                        return (
+                          <>
+                            <button
+                              onClick={() => singleApprove(r)}
+                              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-lg text-white bg-amber-600 hover:bg-amber-700 shadow shadow-amber-600/20"
+                            >
+                              <ShieldCheck className="w-4 h-4" /> 终审通过
+                            </button>
+                            <button
+                              onClick={() => { setSingleRejectId(r.id); setRejectReason('') }}
+                              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-lg text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20 border border-red-100 dark:border-red-800 hover:bg-red-100 dark:hover:bg-red-900/30"
+                            >
+                              <XCircle className="w-4 h-4" /> 终审驳回
+                            </button>
+                          </>
+                        )
+                      }
+                      // 普通审批节点：财务和管理员都可以审核
+                      return (
+                        <>
+                          <button
+                            onClick={() => singleApprove(r)}
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-lg text-white bg-green-600 hover:bg-green-700 shadow shadow-green-600/20"
+                          >
+                            <CheckCircle2 className="w-4 h-4" /> 同意
+                          </button>
+                          <button
+                            onClick={() => { setSingleRejectId(r.id); setRejectReason('') }}
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-lg text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20 border border-red-100 dark:border-red-800 hover:bg-red-100 dark:hover:bg-red-900/30"
+                          >
+                            <XCircle className="w-4 h-4" /> 驳回
+                          </button>
+                        </>
+                      )
+                    })()}
                     <button
                       onClick={() => { setDelegateFor(r.id); setDelegateTo('') }}
                       className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-sm font-medium rounded-lg text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800"
@@ -577,6 +649,8 @@ export default function PendingApprovalPage() {
           </div>
         </div>
       )}
+        </>
+      )}
     </div>
   )
 }
@@ -688,6 +762,53 @@ function ModalFooter({
         <AlertCircle className="w-4 h-4" />
         {confirmLabel}
       </button>
+    </div>
+  )
+}
+
+// ===== 无权限提示组件（员工访问审批页时显示）=====
+function NoPermissionPanel({ role, roleInfo }: { role: Role; roleInfo: { label: string; desc: string; color: string } }) {
+  return (
+    <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-8 sm:p-12 text-center">
+      <div className="mx-auto w-16 h-16 rounded-2xl bg-red-50 dark:bg-red-900/20 flex items-center justify-center mb-4">
+        <ShieldAlert className="w-8 h-8 text-red-500" />
+      </div>
+      <h2 className="text-xl font-bold text-slate-900 dark:text-white mb-2">无访问权限</h2>
+      <p className="text-sm text-slate-500 dark:text-slate-400 max-w-md mx-auto mb-6">
+        当前角色
+        <span
+          className={`mx-1 px-2 py-0.5 text-xs font-medium rounded-full ${
+            role === 'employee'
+              ? 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300'
+              : 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300'
+          }`}
+        >
+          {roleInfo.label}
+        </span>
+        无权访问审批中心。审批功能仅对
+        <span className="mx-1 px-2 py-0.5 text-xs font-medium rounded-full bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300">财务人员</span>
+        和
+        <span className="mx-1 px-2 py-0.5 text-xs font-medium rounded-full bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300">系统管理员</span>
+        开放。
+      </p>
+      <div className="flex flex-wrap items-center justify-center gap-3">
+        <a
+          href="/dashboard"
+          className="inline-flex items-center gap-1.5 px-5 py-2.5 text-sm font-medium text-white bg-brand-600 hover:bg-brand-700 rounded-xl shadow-lg shadow-brand-600/25 transition-all"
+        >
+          返回工作台
+        </a>
+        <a
+          href="/dashboard/reimbursements/new"
+          className="inline-flex items-center gap-1.5 px-5 py-2.5 text-sm font-medium text-brand-700 dark:text-brand-300 bg-brand-50 dark:bg-brand-900/20 border border-brand-200 dark:border-brand-800 hover:bg-brand-100 dark:hover:bg-brand-900/30 rounded-xl transition-all"
+        >
+          <Send className="w-4 h-4" /> 发起报销单
+        </a>
+      </div>
+      <div className="mt-6 pt-6 border-t border-slate-100 dark:border-slate-800 text-xs text-slate-400 max-w-md mx-auto">
+        <p className="mb-1">💡 如需审批权限，请联系系统管理员调整角色。</p>
+        <p>你可以继续使用以下功能：创建报销单、查看个人报销记录、跟踪审批进度。</p>
+      </div>
     </div>
   )
 }

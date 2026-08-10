@@ -24,6 +24,10 @@ import {
   BadgeCheck,
   ClipboardCheck,
   FileCheck2,
+  Shield,
+  Gauge,
+  TrendingUp,
+  TriangleAlert,
 } from 'lucide-react'
 // 兼容：lucide-react 可能没有 FileCode2，使用 fallback
 import { FileCode2 as _FileCode2 } from 'lucide-react'
@@ -37,8 +41,25 @@ import {
   type TripSubsidyRule,
   type ApprovalSignerLevel,
   type ExpenseCategoryDef,
+  EMPLOYEE_LEVELS,
+  type EmployeeLevel,
 } from '@/lib/settings'
 import { useAuthStore } from '@/lib/auth'
+import AllocationPanel, { type AllocationConfig, validateAllocation } from '@/components/AllocationPanel'
+import {
+  checkReportStandards,
+  hasBlockIssue,
+  hasEscalationIssue,
+  type OverStandardIssue,
+  checkBudget,
+  hasOverBudget,
+  hasBlockBudget,
+  hasEscalationBudget,
+  utilizationLevel,
+  type BudgetCheckResult,
+  computeApprovalRouting,
+  inferLevelFromRole,
+} from '@/lib/expense-standard'
 
 /* ======================================================================
    类型定义
@@ -207,12 +228,20 @@ export default function SpreadsheetReimbursementPage() {
   const [department, setDepartment] = useState('')             // 部门
   const [projectCode, setProjectCode] = useState('')           // 项目号/成本中心
   const [purpose, setPurpose] = useState('')                   // 事由/目的
+  // 职级（用于费用标准检查与审批路由）
+  const [employeeLevel, setEmployeeLevel] = useState<EmployeeLevel>('staff')
 
   // 预置：登录用户名 → 报销人；今日日期作为默认
   useEffect(() => {
     if (!isHydrated) return
     setReportName((v) => v || (destAddr ? `${destAddr}出差费用报销` : ''))
   }, [isHydrated, destAddr])
+
+  // 预置：根据登录用户角色推断默认职级
+  useEffect(() => {
+    if (!isHydrated) return
+    setEmployeeLevel((cur) => (cur !== 'staff' ? cur : inferLevelFromRole(user?.role)))
+  }, [isHydrated, user?.role])
 
   // ===== 明细表 =====
   const buildEmptyRow = (d?: string): ExpenseRow => ({
@@ -286,6 +315,39 @@ export default function SpreadsheetReimbursementPage() {
   const invoiceTotal = useMemo(() => rows.reduce((s, r) => s + n(r.invoiceCount), 0), [rows])
   const grandTotal = rowsTotal + (policy?.subsidyInSeparateRow ? subsidyTotal : 0)
 
+  // ===== 费用分摊配置 =====
+  const [allocationConfig, setAllocationConfig] = useState<AllocationConfig>({
+    enabled: false,
+    basis: 'department',
+    items: [],
+  })
+  const allocationValidation = useMemo(
+    () => (allocationConfig.enabled ? validateAllocation(allocationConfig.items) : { isValid: true, total: 0, message: '' }),
+    [allocationConfig]
+  )
+
+  // ===== 汇联易风格：费用标准检查 / 预算控制 / 智能审批路由 =====
+  const currentTripType = subsidy.subsidyKey || 'domestic'
+  const overStandardIssues: OverStandardIssue[] = useMemo(() => {
+    if (!isHydrated || !policy?.expenseStandards?.length) return []
+    return checkReportStandards(policy, employeeLevel, currentTripType, rows)
+  }, [isHydrated, policy, employeeLevel, currentTripType, rows])
+
+  const budgetCheckResults: BudgetCheckResult[] = useMemo(() => {
+    if (!isHydrated || !policy?.budgetControl?.enabled) return []
+    return checkBudget(policy, department, projectCode, grandTotal)
+  }, [isHydrated, policy, department, projectCode, grandTotal])
+
+  const approvalRouting = useMemo(() => {
+    if (!isHydrated) return { triggeredRules: [], appendSignerKeys: [], hasEscalation: false }
+    return computeApprovalRouting(
+      policy,
+      grandTotal,
+      hasEscalationIssue(overStandardIssues),
+      hasOverBudget(budgetCheckResults) || hasEscalationBudget(budgetCheckResults),
+    )
+  }, [isHydrated, policy, grandTotal, overStandardIssues, budgetCheckResults])
+
   // ===== 签字区 =====
   const [signatures, setSignatures] = useState<SignatureState>({ signedMap: {} })
   useEffect(() => {
@@ -328,8 +390,22 @@ export default function SpreadsheetReimbursementPage() {
     if (!applicantKey || !signatures.signedMap[applicantKey]?.signed) {
       arr.push({ kind: 'warn', msg: '递交前请先在「申请人签字」处签字确认' })
     }
+    // 费用分摊校验
+    if (allocationConfig.enabled && !allocationValidation.isValid) {
+      arr.push({ kind: 'err', msg: `费用分摊${allocationValidation.message}` })
+    }
+    // 费用标准阻断级超标校验
+    if (hasBlockIssue(overStandardIssues)) {
+      const blockers = overStandardIssues.filter((i) => i.action === 'block')
+      arr.push({ kind: 'err', msg: `存在阻断级超标：${blockers.map((b) => b.message).join('；')}` })
+    }
+    // 预算阻断级超预算校验
+    if (hasBlockBudget(budgetCheckResults)) {
+      const blockers = budgetCheckResults.filter((r) => r.overBudget && r.action === 'block')
+      arr.push({ kind: 'err', msg: `${blockers.map((b) => `${b.name}预算超支`).join('；')}，请联系管理员调整预算` })
+    }
     return arr
-  }, [reportName, department, employeeId, projectCode, policy, rows, enabledCategories, subsidyTotal, applicantKey, signatures])
+  }, [reportName, department, employeeId, projectCode, policy, rows, enabledCategories, subsidyTotal, applicantKey, signatures, allocationConfig, allocationValidation, overStandardIssues, budgetCheckResults])
 
   // ===== 操作：暂存 / 提交审批 =====
   const [toast, setToast] = useState<{ kind: 'ok' | 'err' | 'info'; msg: string } | null>(null)
@@ -345,9 +421,11 @@ export default function SpreadsheetReimbursementPage() {
     reportName,
     startDate, endDate, originAddr, destAddr,
     employeeId, department, projectCode, purpose,
+    employeeLevel,
     rows,
     subsidy,
     signatures,
+    allocationConfig,
     policySnapshot: policy,
     grandTotal,
     savedAt: new Date().toISOString(),
@@ -529,6 +607,18 @@ export default function SpreadsheetReimbursementPage() {
                 <input value={projectCode} onChange={(e) => setProjectCode(e.target.value)} placeholder="如：PRJ-2026-0801" />
               </label>
             )}
+            <label className="sm:col-span-3">
+              <span><Shield className="inline w-3 h-3 -mt-0.5 mr-1" />职级（用于费用标准校验）</span>
+              <select
+                value={employeeLevel}
+                onChange={(e) => setEmployeeLevel(e.target.value as EmployeeLevel)}
+                className="w-full px-2.5 py-1.5 rounded-md bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 outline-none focus:ring-2 focus:ring-brand-500/30 text-slate-800 dark:text-slate-100 text-sm"
+              >
+                {EMPLOYEE_LEVELS.map((lv) => (
+                  <option key={lv.value} value={lv.value}>{lv.label}</option>
+                ))}
+              </select>
+            </label>
 
             <label className="sm:col-span-6 sm:col-start-1">
               <span><Receipt className="inline w-3 h-3 -mt-0.5 mr-1" />报销名称（单据名称） *</span>
@@ -767,6 +857,123 @@ export default function SpreadsheetReimbursementPage() {
               <Kpi title="补贴合计" value={`${policy?.currency || '¥'}${fmtMoney(subsidyTotal)}`} highlight />
             </div>
           </div>
+
+          {/* ========== 费用分摊区（汇联易风格：按部门/项目/成本中心分摊）========== */}
+          <div className="print:hidden">
+            <AllocationPanel
+              totalAmount={grandTotal}
+              config={allocationConfig}
+              onChange={setAllocationConfig}
+            />
+          </div>
+
+          {/* ========== 汇联易风格：费用标准检查 + 预算控制 + 智能审批路由 ========== */}
+          {(overStandardIssues.length > 0 || budgetCheckResults.length > 0 || approvalRouting.hasEscalation) && (
+            <div className="print:hidden mt-4 space-y-3">
+              {/* 费用标准超标预警 */}
+              {overStandardIssues.length > 0 && (
+                <div className="rounded-lg border border-amber-200 dark:border-amber-900/50 bg-amber-50/60 dark:bg-amber-900/10 p-4">
+                  <div className="flex items-center gap-2 mb-2">
+                    <TriangleAlert className="w-4 h-4 text-amber-600 dark:text-amber-400" />
+                    <h4 className="text-sm font-semibold text-amber-800 dark:text-amber-300">
+                      费用标准检查 · {overStandardIssues.length} 项提示
+                    </h4>
+                    <span className="text-[11px] text-amber-700/70 dark:text-amber-400/70 ml-auto">
+                      职级：{EMPLOYEE_LEVELS.find((l) => l.value === employeeLevel)?.label} · 差旅类型：{currentTripType}
+                    </span>
+                  </div>
+                  <ul className="space-y-1.5 text-xs">
+                    {overStandardIssues.map((issue, idx) => {
+                      const isBlock = issue.action === 'block'
+                      const isEscalation = issue.action === 'escalation'
+                      const tagClass = isBlock
+                        ? 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300'
+                        : isEscalation
+                          ? 'bg-orange-100 text-orange-700 dark:bg-orange-900/40 dark:text-orange-300'
+                          : 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300'
+                      const tagText = isBlock ? '阻断' : isEscalation ? '升级审批' : '提示'
+                      return (
+                        <li key={idx} className="flex items-start gap-2 text-slate-700 dark:text-slate-300">
+                          <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium flex-shrink-0 ${tagClass}`}>{tagText}</span>
+                          <span className="flex-1">{issue.message}</span>
+                        </li>
+                      )
+                    })}
+                  </ul>
+                </div>
+              )}
+
+              {/* 预算使用进度 */}
+              {budgetCheckResults.length > 0 && (
+                <div className="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4">
+                  <div className="flex items-center gap-2 mb-3">
+                    <Gauge className="w-4 h-4 text-brand-600 dark:text-brand-400" />
+                    <h4 className="text-sm font-semibold text-slate-800 dark:text-slate-100">预算控制</h4>
+                    <span className="text-[11px] text-slate-500 ml-auto">
+                      周期：{policy?.budgetControl?.period === 'monthly' ? '月度' : policy?.budgetControl?.period === 'quarterly' ? '季度' : '年度'}
+                    </span>
+                  </div>
+                  <div className="space-y-3">
+                    {budgetCheckResults.map((b, idx) => {
+                      const level = utilizationLevel(b.afterUtilization)
+                      const barColor = level === 'exceeded' ? 'bg-red-500' : level === 'danger' ? 'bg-orange-500' : level === 'warning' ? 'bg-amber-500' : 'bg-emerald-500'
+                      const label = b.type === 'department' ? '部门' : '项目'
+                      return (
+                        <div key={idx}>
+                          <div className="flex items-center justify-between text-xs mb-1">
+                            <span className="text-slate-600 dark:text-slate-300">
+                              <span className="inline-block px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-500 mr-1.5">{label}</span>
+                              {b.name}
+                            </span>
+                            <span className={b.overBudget ? 'text-red-600 dark:text-red-400 font-medium' : 'text-slate-500'}>
+                              ¥{fmtMoney(b.afterAmount)} / ¥{fmtMoney(b.budgetAmount)}
+                              {b.overBudget && <span className="ml-1 text-red-600 dark:text-red-400">（超支）</span>}
+                            </span>
+                          </div>
+                          <div className="h-2 bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden">
+                            <div
+                              className={`h-full ${barColor} transition-all`}
+                              style={{ width: `${Math.min(100, b.afterUtilization * 100)}%` }}
+                            />
+                          </div>
+                          <div className="flex items-center justify-between text-[10px] mt-0.5 text-slate-400">
+                            <span>已用 {fmtMoney(b.usedAmount)}（{(b.utilization * 100).toFixed(1)}%）</span>
+                            <span>本次 {fmtMoney(b.pendingAmount)} → 预计 {(b.afterUtilization * 100).toFixed(1)}%</span>
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* 智能审批路由触发提示 */}
+              {approvalRouting.hasEscalation && (
+                <div className="rounded-lg border border-brand-200 dark:border-brand-900/50 bg-brand-50/60 dark:bg-brand-900/10 p-4">
+                  <div className="flex items-center gap-2 mb-2">
+                    <TrendingUp className="w-4 h-4 text-brand-600 dark:text-brand-400" />
+                    <h4 className="text-sm font-semibold text-brand-800 dark:text-brand-300">
+                      智能审批路由 · 触发 {approvalRouting.triggeredRules.length} 条升级规则
+                    </h4>
+                  </div>
+                  <ul className="space-y-1 text-xs text-slate-700 dark:text-slate-300">
+                    {approvalRouting.triggeredRules.map((rule) => (
+                      <li key={rule.id} className="flex items-center gap-2">
+                        <CheckCircle2 className="w-3 h-3 text-brand-500 flex-shrink-0" />
+                        <span>{rule.name}</span>
+                      </li>
+                    ))}
+                  </ul>
+                  <p className="text-[11px] text-brand-700/70 dark:text-brand-400/70 mt-2">
+                    本单将自动追加审批节点：
+                    {approvalRouting.appendSignerKeys
+                      .map((k) => enabledSigners.find((s) => s.key === k)?.title || k)
+                      .join('、')}
+                  </p>
+                </div>
+              )}
+            </div>
+          )}
 
           {/* ========== 签字区（多级） ========== */}
           <div className="pt-4 border-t border-dashed border-slate-300 dark:border-slate-700">

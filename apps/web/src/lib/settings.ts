@@ -95,6 +95,90 @@ export interface ApprovalSignerLevel {
   enabled: boolean
 }
 
+/* ======================================================================
+   汇联易风格扩展：费用标准 / 预算控制 / 智能审批路由
+   ====================================================================== */
+
+/** 员工职级（用于差旅标准/审批路由） */
+export type EmployeeLevel = 'staff' | 'manager' | 'director' | 'vp' | 'c_level'
+
+export const EMPLOYEE_LEVELS: Array<{ value: EmployeeLevel; label: string; defaultDailyHotel: number; defaultDailyMeal: number }> = [
+  { value: 'staff',    label: '普通员工',  defaultDailyHotel: 400,  defaultDailyMeal: 80 },
+  { value: 'manager',  label: '经理',      defaultDailyHotel: 500,  defaultDailyMeal: 100 },
+  { value: 'director', label: '总监',      defaultDailyHotel: 700,  defaultDailyMeal: 150 },
+  { value: 'vp',       label: '副总裁',    defaultDailyHotel: 900,  defaultDailyMeal: 200 },
+  { value: 'c_level',  label: '高管(C级)', defaultDailyHotel: 1200, defaultDailyMeal: 300 },
+]
+
+/** 费用标准规则：按职级×费用类别×差旅类型配置单笔/单日限额 */
+export interface ExpenseStandardRule {
+  id: string
+  /** 适用职级 */
+  level: EmployeeLevel
+  /** 费用类别 */
+  category: ExpenseCategoryKey
+  /** 出差类型：'any' 表示全部，或 domestic/overseas/local/remote */
+  tripType: string
+  /** 单笔限额（元），0 表示不限 */
+  perReceiptLimit: number
+  /** 单日限额（元，主要针对住宿/餐饮），0 表示不限 */
+  perDayLimit: number
+  /** 超标处理策略：warn 仅提示 / block 阻断 / escalation 自动升级审批 */
+  overLimitAction: 'warn' | 'block' | 'escalation'
+  /** 备注 */
+  remark?: string
+}
+
+/** 部门预算 */
+export interface DepartmentBudget {
+  id: string
+  department: string
+  /** 预算周期内额度（元） */
+  amount: number
+  /** 已使用额度（元），由已审批通过的报销单累计 */
+  usedAmount: number
+}
+
+/** 项目/成本中心预算 */
+export interface ProjectBudget {
+  id: string
+  projectCode: string
+  projectName: string
+  amount: number
+  usedAmount: number
+}
+
+/** 预算控制配置 */
+export interface BudgetControl {
+  /** 是否启用预算控制 */
+  enabled: boolean
+  /** 预算周期 */
+  period: 'monthly' | 'quarterly' | 'yearly'
+  /** 部门预算列表 */
+  departmentBudgets: DepartmentBudget[]
+  /** 项目预算列表 */
+  projectBudgets: ProjectBudget[]
+  /** 超预算处理策略：warn 提示 / block 阻断 / escalation 升级审批 */
+  overBudgetAction: 'warn' | 'block' | 'escalation'
+}
+
+/** 智能审批路由规则：满足条件时追加审批节点 */
+export interface ApprovalRoutingRule {
+  id: string
+  /** 规则名称 */
+  name: string
+  /** 是否启用 */
+  enabled: boolean
+  /** 单据总额阈值（元），超过此值触发，0 表示不限制 */
+  amountThreshold: number
+  /** 是否要求存在超标项才触发 */
+  hasOverStandard: boolean
+  /** 是否要求超预算才触发 */
+  hasOverBudget: boolean
+  /** 触发后追加的审批节点 key（对应 signerLevels 中的 key，如 gm/vp/cfo） */
+  appendSignerKey: string
+}
+
 /** 报销单编号生成格式 */
 export interface ReimbursementSerialFormat {
   /** 前缀，如 BX / REI / SIEMENS-EXP */
@@ -135,6 +219,13 @@ export interface ReimbursementPolicy {
   subsidyInSeparateRow: boolean
   /** 备注/报销制度摘要，打印在报销单底部表格外 */
   footerNotes: string
+  /* --- 汇联易风格扩展字段 --- */
+  /** 费用标准规则列表（按职级×类别×差旅类型限额） */
+  expenseStandards: ExpenseStandardRule[]
+  /** 预算控制配置 */
+  budgetControl: BudgetControl
+  /** 智能审批路由规则 */
+  approvalRouting: ApprovalRoutingRule[]
 }
 
 /** 公司 / 单位信息（用于打印报销单、邮件签名、导出 PDF 抬头等） */
@@ -267,6 +358,53 @@ export const DEFAULT_REIMBURSEMENT_POLICY: ReimbursementPolicy = {
   subsidyInSeparateRow: true,
   footerNotes:
     '说明：① 所有费用须凭真实合法发票报销，复印件、收据原则上不予受理；② 住宿费超标准部分自理，双人同性出差原则上合住一间；③ 补贴天数按"起程当日、返程当日各计一天"计算；④ 超过¥2000元的招待费须附参会人员名单及事由说明。',
+  /* --- 汇联易风格扩展默认值 --- */
+  expenseStandards: [
+    // 普通员工
+    { id: 'es-staff-hotel-d', level: 'staff', category: 'hotel', tripType: 'domestic', perReceiptLimit: 0, perDayLimit: 400, overLimitAction: 'warn', remark: '国内出差住宿 400/天' },
+    { id: 'es-staff-meal-d', level: 'staff', category: 'meal', tripType: 'domestic', perReceiptLimit: 0, perDayLimit: 80, overLimitAction: 'warn', remark: '国内出差餐补 80/天' },
+    { id: 'es-staff-hotel-o', level: 'staff', category: 'hotel', tripType: 'overseas', perReceiptLimit: 0, perDayLimit: 800, overLimitAction: 'warn', remark: '海外出差住宿 800/天' },
+    { id: 'es-staff-transport', level: 'staff', category: 'transport', tripType: 'any', perReceiptLimit: 3000, perDayLimit: 0, overLimitAction: 'escalation', remark: '单程交通超3000需升级审批' },
+    // 经理
+    { id: 'es-mgr-hotel-d', level: 'manager', category: 'hotel', tripType: 'domestic', perReceiptLimit: 0, perDayLimit: 500, overLimitAction: 'warn', remark: '经理国内住宿 500/天' },
+    { id: 'es-mgr-meal-d', level: 'manager', category: 'meal', tripType: 'domestic', perReceiptLimit: 0, perDayLimit: 100, overLimitAction: 'warn' },
+    { id: 'es-mgr-transport', level: 'manager', category: 'transport', tripType: 'any', perReceiptLimit: 5000, perDayLimit: 0, overLimitAction: 'escalation' },
+    // 总监
+    { id: 'es-dir-hotel-d', level: 'director', category: 'hotel', tripType: 'domestic', perReceiptLimit: 0, perDayLimit: 700, overLimitAction: 'warn' },
+    { id: 'es-dir-meal-d', level: 'director', category: 'meal', tripType: 'domestic', perReceiptLimit: 0, perDayLimit: 150, overLimitAction: 'warn' },
+    { id: 'es-dir-transport', level: 'director', category: 'transport', tripType: 'any', perReceiptLimit: 8000, perDayLimit: 0, overLimitAction: 'escalation' },
+    // 副总裁
+    { id: 'es-vp-hotel-d', level: 'vp', category: 'hotel', tripType: 'domestic', perReceiptLimit: 0, perDayLimit: 900, overLimitAction: 'warn' },
+    { id: 'es-vp-meal-d', level: 'vp', category: 'meal', tripType: 'domestic', perReceiptLimit: 0, perDayLimit: 200, overLimitAction: 'warn' },
+    { id: 'es-vp-transport', level: 'vp', category: 'transport', tripType: 'any', perReceiptLimit: 15000, perDayLimit: 0, overLimitAction: 'escalation' },
+    // 高管(C级)
+    { id: 'es-c-hotel-d', level: 'c_level', category: 'hotel', tripType: 'domestic', perReceiptLimit: 0, perDayLimit: 1200, overLimitAction: 'warn' },
+    { id: 'es-c-meal-d', level: 'c_level', category: 'meal', tripType: 'domestic', perReceiptLimit: 0, perDayLimit: 300, overLimitAction: 'warn' },
+    { id: 'es-c-transport', level: 'c_level', category: 'transport', tripType: 'any', perReceiptLimit: 20000, perDayLimit: 0, overLimitAction: 'escalation' },
+  ],
+  budgetControl: {
+    enabled: true,
+    period: 'monthly',
+    departmentBudgets: [
+      { id: 'b-d-rd', department: '研发部', amount: 200000, usedAmount: 86500 },
+      { id: 'b-d-sales', department: '销售部', amount: 150000, usedAmount: 112000 },
+      { id: 'b-d-mkt', department: '市场部', amount: 100000, usedAmount: 43800 },
+      { id: 'b-d-hr', department: '人事行政部', amount: 60000, usedAmount: 21500 },
+      { id: 'b-d-finance', department: '财务部', amount: 40000, usedAmount: 12300 },
+    ],
+    projectBudgets: [
+      { id: 'b-p-001', projectCode: 'P2026-001', projectName: 'AI报销系统V2', amount: 500000, usedAmount: 215800 },
+      { id: 'b-p-002', projectCode: 'P2026-002', projectName: '华北区渠道拓展', amount: 300000, usedAmount: 187200 },
+      { id: 'b-p-003', projectCode: 'P2026-003', projectName: '品牌升级项目', amount: 200000, usedAmount: 68500 },
+    ],
+    overBudgetAction: 'warn',
+  },
+  approvalRouting: [
+    { id: 'ar-1', name: '单笔超5000元升级总经理审批', enabled: true, amountThreshold: 5000, hasOverStandard: false, hasOverBudget: false, appendSignerKey: 'gm' },
+    { id: 'ar-2', name: '超标项自动升级总经理审批', enabled: true, amountThreshold: 0, hasOverStandard: true, hasOverBudget: false, appendSignerKey: 'gm' },
+    { id: 'ar-3', name: '超预算自动升级总经理审批', enabled: true, amountThreshold: 0, hasOverStandard: false, hasOverBudget: true, appendSignerKey: 'gm' },
+    { id: 'ar-4', name: '单笔超30000元升级总经理审批', enabled: true, amountThreshold: 30000, hasOverStandard: false, hasOverBudget: false, appendSignerKey: 'gm' },
+  ],
 }
 
 export const INDUSTRY_OPTIONS = [
@@ -294,7 +432,7 @@ export const SCALE_OPTIONS: Array<{ value: CompanyInfo['scale']; label: string }
 
 // --- Store ---
 export const useSettingsStore = create<AppSettingsState>()(
-  persist(
+  persist<AppSettingsState>(
     (set) => ({
       ocr: DEFAULT_OCR_CONFIG,
       ui: DEFAULT_UI_SETTINGS,
@@ -317,7 +455,24 @@ export const useSettingsStore = create<AppSettingsState>()(
       setCompany: (next) => set({ company: next }),
       patchPolicy: (partial) =>
         set((s) => ({
-          policy: { ...s.policy, ...partial, categories: partial.categories ?? s.policy.categories, subsidies: partial.subsidies ?? s.policy.subsidies, signerLevels: partial.signerLevels ?? s.policy.signerLevels, serial: partial.serial ? { ...s.policy.serial, ...partial.serial } : s.policy.serial },
+          policy: {
+            ...s.policy,
+            ...partial,
+            categories: partial.categories ?? s.policy.categories,
+            subsidies: partial.subsidies ?? s.policy.subsidies,
+            signerLevels: partial.signerLevels ?? s.policy.signerLevels,
+            serial: partial.serial ? { ...s.policy.serial, ...partial.serial } : s.policy.serial,
+            expenseStandards: partial.expenseStandards ?? s.policy.expenseStandards,
+            budgetControl: partial.budgetControl
+              ? {
+                  ...s.policy.budgetControl,
+                  ...partial.budgetControl,
+                  departmentBudgets: partial.budgetControl.departmentBudgets ?? s.policy.budgetControl.departmentBudgets,
+                  projectBudgets: partial.budgetControl.projectBudgets ?? s.policy.budgetControl.projectBudgets,
+                }
+              : s.policy.budgetControl,
+            approvalRouting: partial.approvalRouting ?? s.policy.approvalRouting,
+          },
         })),
       setPolicy: (next) => set({ policy: next }),
       resetOcr: () => set({ ocr: DEFAULT_OCR_CONFIG }),
@@ -327,7 +482,34 @@ export const useSettingsStore = create<AppSettingsState>()(
     {
       name: 'app-settings',
       storage: createJSONStorage(() => localStorage),
-      partialize: (s) => ({ ocr: s.ocr, ui: s.ui, company: s.company, policy: s.policy }),
+      partialize: (s) => ({ ocr: s.ocr, ui: s.ui, company: s.company, policy: s.policy }) as unknown as AppSettingsState,
+      // 深层合并：确保新增字段（如 expenseStandards/budgetControl/approvalRouting）
+      // 在老版本 localStorage 缺失时使用默认值兜底
+      merge: (persisted, current) => {
+        const p = (persisted as Record<string, unknown>) || {}
+        const c = (current as AppSettingsState)
+        const persistedPolicy = (p.policy as ReimbursementPolicy) || undefined
+        const defaultPolicy = DEFAULT_REIMBURSEMENT_POLICY
+        const mergedPolicy: ReimbursementPolicy = persistedPolicy
+          ? {
+              ...defaultPolicy,
+              ...persistedPolicy,
+              categories: persistedPolicy.categories?.length ? persistedPolicy.categories : defaultPolicy.categories,
+              subsidies: persistedPolicy.subsidies?.length ? persistedPolicy.subsidies : defaultPolicy.subsidies,
+              signerLevels: persistedPolicy.signerLevels?.length ? persistedPolicy.signerLevels : defaultPolicy.signerLevels,
+              serial: { ...defaultPolicy.serial, ...(persistedPolicy.serial || {}) },
+              expenseStandards: persistedPolicy.expenseStandards?.length ? persistedPolicy.expenseStandards : defaultPolicy.expenseStandards,
+              approvalRouting: persistedPolicy.approvalRouting?.length ? persistedPolicy.approvalRouting : defaultPolicy.approvalRouting,
+              budgetControl: {
+                ...defaultPolicy.budgetControl,
+                ...(persistedPolicy.budgetControl || {}),
+                departmentBudgets: persistedPolicy.budgetControl?.departmentBudgets?.length ? persistedPolicy.budgetControl.departmentBudgets : defaultPolicy.budgetControl.departmentBudgets,
+                projectBudgets: persistedPolicy.budgetControl?.projectBudgets?.length ? persistedPolicy.budgetControl.projectBudgets : defaultPolicy.budgetControl.projectBudgets,
+              },
+            }
+          : defaultPolicy
+        return { ...c, ...p, policy: mergedPolicy } as AppSettingsState
+      },
     }
   )
 )
@@ -377,6 +559,23 @@ export function readReimbursementPolicySync(): ReimbursementPolicy {
       ? parsed.policy.signerLevels
       : DEFAULT_REIMBURSEMENT_POLICY.signerLevels
     base.serial = { ...DEFAULT_REIMBURSEMENT_POLICY.serial, ...(parsed?.policy?.serial || {}) }
+    // 兜底扩展字段（老版本 localStorage 无这些字段时使用默认值）
+    base.expenseStandards = parsed?.policy?.expenseStandards?.length
+      ? parsed.policy.expenseStandards
+      : DEFAULT_REIMBURSEMENT_POLICY.expenseStandards
+    base.approvalRouting = parsed?.policy?.approvalRouting?.length
+      ? parsed.policy.approvalRouting
+      : DEFAULT_REIMBURSEMENT_POLICY.approvalRouting
+    base.budgetControl = {
+      ...DEFAULT_REIMBURSEMENT_POLICY.budgetControl,
+      ...(parsed?.policy?.budgetControl || {}),
+      departmentBudgets: parsed?.policy?.budgetControl?.departmentBudgets?.length
+        ? parsed.policy.budgetControl.departmentBudgets
+        : DEFAULT_REIMBURSEMENT_POLICY.budgetControl.departmentBudgets,
+      projectBudgets: parsed?.policy?.budgetControl?.projectBudgets?.length
+        ? parsed.policy.budgetControl.projectBudgets
+        : DEFAULT_REIMBURSEMENT_POLICY.budgetControl.projectBudgets,
+    }
     return base
   } catch {
     return DEFAULT_REIMBURSEMENT_POLICY

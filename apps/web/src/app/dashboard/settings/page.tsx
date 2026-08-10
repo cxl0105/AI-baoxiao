@@ -36,6 +36,9 @@ import {
   FileSignature,
   FileCode,
   Server,
+  Shield,
+  Gauge,
+  Trash2,
 } from 'lucide-react'
 import {
   DEFAULT_OCR_CONFIG,
@@ -44,6 +47,7 @@ import {
   DEFAULT_REIMBURSEMENT_POLICY,
   INDUSTRY_OPTIONS,
   SCALE_OPTIONS,
+  EMPLOYEE_LEVELS,
   useSettingsStore,
   type OcrProviderConfig,
   type OcrProviderType,
@@ -54,12 +58,15 @@ import {
   type ApprovalSignerLevel,
   type ExpenseCategoryDef,
   type ReimbursementSerialFormat,
+  type EmployeeLevel,
+  type ExpenseStandardRule,
+  type ApprovalRoutingRule,
   generateNextSerialNo,
 } from '@/lib/settings'
 import { runVisionLlmOcr, runBackendProxyOcr } from '@/lib/ocr-providers'
 import { api, CATEGORY_LABEL, ocrProxyCheckConfig, type BackendProxyOcrPayload } from '@/lib/api'
 
-type SettingsTab = 'ocr' | 'company' | 'ui' | 'policy'
+type SettingsTab = 'ocr' | 'company' | 'ui' | 'policy' | 'standard'
 
 const PROVIDER_OPTIONS: Array<{ value: OcrProviderType; label: string; desc: string }> = [
   { value: 'mock', label: '本地 Mock（演示/兜底）', desc: '不联网，基于文件名和内容正则推断，用于前端演示' },
@@ -80,6 +87,7 @@ const TAB_CONFIG: Array<{ key: SettingsTab; label: string; icon: React.Component
   { key: 'ocr', label: 'AI OCR 大模型', icon: Sparkles, desc: '配置发票识别的视觉大模型 API' },
   { key: 'company', label: '公司信息', icon: Building2, desc: '公司抬头、开票信息、联系人等' },
   { key: 'policy', label: '报销规则', icon: ClipboardList, desc: '补贴标准、单据格式、签字审批流程' },
+  { key: 'standard', label: '费用标准与预算', icon: Shield, desc: '差旅费用限额、部门/项目预算、智能审批路由' },
   { key: 'ui', label: '界面偏好', icon: Palette, desc: '视图、主题、金额精度等个性化' },
 ]
 
@@ -412,6 +420,13 @@ export default function SettingsPage() {
 
       {tab === 'policy' && (
         <PolicyTab
+          form={policyForm}
+          setForm={(updater) => { dirtyPolicyRef.current = true; setPolicyForm(updater) }}
+        />
+      )}
+
+      {tab === 'standard' && (
+        <ExpenseStandardTab
           form={policyForm}
           setForm={(updater) => { dirtyPolicyRef.current = true; setPolicyForm(updater) }}
         />
@@ -1792,5 +1807,247 @@ function CheckboxRow(props: {
         {props.desc && <div className="text-xs text-slate-500 dark:text-slate-400 mt-0.5 leading-relaxed">{props.desc}</div>}
       </div>
     </label>
+  )
+}
+
+/* ======================================================================
+   Tab 5: 费用标准与预算控制（汇联易风格）
+   ====================================================================== */
+const CATEGORY_OPTIONS = [
+  { value: 'transport', label: '交通费' },
+  { value: 'taxi',      label: '打车费' },
+  { value: 'hotel',     label: '住宿费' },
+  { value: 'meal',      label: '餐饮费' },
+  { value: 'other',     label: '其它费用' },
+] as const
+
+const TRIP_TYPE_OPTIONS = [
+  { value: 'any',      label: '全部' },
+  { value: 'domestic', label: '国内出差' },
+  { value: 'overseas', label: '海外出差' },
+  { value: 'local',    label: '市内/近郊' },
+  { value: 'remote',   label: '偏远地区' },
+] as const
+
+const OVER_LIMIT_OPTIONS = [
+  { value: 'warn',       label: '仅提示' },
+  { value: 'block',      label: '阻断提交' },
+  { value: 'escalation', label: '升级审批' },
+] as const
+
+const uid = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4)
+
+function ExpenseStandardTab({ form, setForm }: {
+  form: ReimbursementPolicy
+  setForm: React.Dispatch<React.SetStateAction<ReimbursementPolicy>>
+}) {
+  const standards = form.expenseStandards || []
+  const bc = form.budgetControl
+  const routing = form.approvalRouting || []
+
+  /* --- 费用标准规则操作 --- */
+  const addStandard = () => {
+    const newRule: ExpenseStandardRule = {
+      id: uid(),
+      level: 'staff',
+      category: 'hotel',
+      tripType: 'domestic',
+      perReceiptLimit: 0,
+      perDayLimit: 400,
+      overLimitAction: 'warn',
+      remark: '',
+    }
+    setForm((f) => ({ ...f, expenseStandards: [...(f.expenseStandards || []), newRule] }))
+  }
+  const updateStandard = (id: string, patch: Partial<ExpenseStandardRule>) => {
+    setForm((f) => ({ ...f, expenseStandards: (f.expenseStandards || []).map((r) => (r.id === id ? { ...r, ...patch } : r)) }))
+  }
+  const removeStandard = (id: string) => {
+    setForm((f) => ({ ...f, expenseStandards: (f.expenseStandards || []).filter((r) => r.id !== id) }))
+  }
+
+  /* --- 预算控制操作 --- */
+  const updateBudgetControl = (patch: Partial<typeof bc>) => {
+    setForm((f) => ({ ...f, budgetControl: { ...f.budgetControl, ...patch } as typeof f.budgetControl }))
+  }
+
+  /* --- 审批路由操作 --- */
+  const addRouting = () => {
+    const newRule: ApprovalRoutingRule = {
+      id: uid(),
+      name: '新规则',
+      enabled: true,
+      amountThreshold: 5000,
+      hasOverStandard: false,
+      hasOverBudget: false,
+      appendSignerKey: 'gm',
+    }
+    setForm((f) => ({ ...f, approvalRouting: [...(f.approvalRouting || []), newRule] }))
+  }
+  const updateRouting = (id: string, patch: Partial<ApprovalRoutingRule>) => {
+    setForm((f) => ({ ...f, approvalRouting: (f.approvalRouting || []).map((r) => (r.id === id ? { ...r, ...patch } : r)) }))
+  }
+  const removeRouting = (id: string) => {
+    setForm((f) => ({ ...f, approvalRouting: (f.approvalRouting || []).filter((r) => r.id !== id) }))
+  }
+
+  const inputCls = 'w-full px-2 py-1.5 text-sm bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-md outline-none focus:ring-2 focus:ring-brand-500/30 text-slate-800 dark:text-slate-100'
+
+  return (
+    <div className="space-y-5">
+      {/* ===== 费用标准规则 ===== */}
+      <Card title="差旅费用标准规则" icon={<Shield className="w-5 h-5" />} color="from-amber-500 to-orange-500"
+        subtitle="按职级 × 费用类别 × 差旅类型配置单笔/单日限额。报销单填写时实时检查，超标可触发提示/阻断/升级审批。">
+        <div className="overflow-x-auto rounded-xl border border-slate-200 dark:border-slate-700">
+          <table className="w-full text-sm">
+            <thead className="bg-slate-50 dark:bg-slate-900/60 text-slate-600 dark:text-slate-300 text-xs">
+              <tr>
+                <th className="text-left px-3 py-2 font-medium">职级</th>
+                <th className="text-left px-3 py-2 font-medium">费用类别</th>
+                <th className="text-left px-3 py-2 font-medium">差旅类型</th>
+                <th className="text-right px-3 py-2 font-medium">单笔限额</th>
+                <th className="text-right px-3 py-2 font-medium">单日限额</th>
+                <th className="text-left px-3 py-2 font-medium">超标处理</th>
+                <th className="text-left px-3 py-2 font-medium">备注</th>
+                <th className="text-center px-3 py-2 font-medium w-10"></th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+              {standards.length === 0 && (
+                <tr><td colSpan={8} className="text-center py-8 text-slate-400 text-sm">暂无规则，点击下方「添加规则」</td></tr>
+              )}
+              {standards.map((rule) => (
+                <tr key={rule.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/30">
+                  <td className="px-3 py-2">
+                    <select className={inputCls} value={rule.level} onChange={(e) => updateStandard(rule.id, { level: e.target.value as EmployeeLevel })}>
+                      {EMPLOYEE_LEVELS.map((lv) => <option key={lv.value} value={lv.value}>{lv.label}</option>)}
+                    </select>
+                  </td>
+                  <td className="px-3 py-2">
+                    <select className={inputCls} value={rule.category} onChange={(e) => updateStandard(rule.id, { category: e.target.value as ExpenseStandardRule['category'] })}>
+                      {CATEGORY_OPTIONS.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
+                    </select>
+                  </td>
+                  <td className="px-3 py-2">
+                    <select className={inputCls} value={rule.tripType} onChange={(e) => updateStandard(rule.id, { tripType: e.target.value })}>
+                      {TRIP_TYPE_OPTIONS.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
+                    </select>
+                  </td>
+                  <td className="px-3 py-2">
+                    <input type="number" className={`${inputCls} text-right`} value={rule.perReceiptLimit} onChange={(e) => updateStandard(rule.id, { perReceiptLimit: Number(e.target.value) || 0 })} />
+                  </td>
+                  <td className="px-3 py-2">
+                    <input type="number" className={`${inputCls} text-right`} value={rule.perDayLimit} onChange={(e) => updateStandard(rule.id, { perDayLimit: Number(e.target.value) || 0 })} />
+                  </td>
+                  <td className="px-3 py-2">
+                    <select className={inputCls} value={rule.overLimitAction} onChange={(e) => updateStandard(rule.id, { overLimitAction: e.target.value as ExpenseStandardRule['overLimitAction'] })}>
+                      {OVER_LIMIT_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+                    </select>
+                  </td>
+                  <td className="px-3 py-2">
+                    <input className={inputCls} value={rule.remark || ''} onChange={(e) => updateStandard(rule.id, { remark: e.target.value })} placeholder="选填" />
+                  </td>
+                  <td className="px-3 py-2 text-center">
+                    <button onClick={() => removeStandard(rule.id)} className="p-1 text-slate-400 hover:text-red-500 rounded transition-colors" title="删除">
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <div className="mt-3">
+          <button onClick={addStandard} className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-brand-600 dark:text-brand-400 bg-brand-50 dark:bg-brand-900/20 hover:bg-brand-100 dark:hover:bg-brand-900/40 rounded-lg transition-colors">
+            <Plus className="w-4 h-4" /> 添加规则
+          </button>
+        </div>
+      </Card>
+
+      {/* ===== 预算控制 ===== */}
+      <Card title="预算控制" icon={<Gauge className="w-5 h-5" />} color="from-emerald-500 to-teal-500"
+        subtitle="按部门/项目设置预算额度，报销单递交时实时核算使用率，超预算可触发提示/阻断/升级审批。">
+        <div className="space-y-4">
+          <div className="flex items-center justify-between p-3 rounded-lg bg-slate-50 dark:bg-slate-800/50">
+            <div className="flex items-center gap-2">
+              <span className="text-sm font-medium text-slate-700 dark:text-slate-200">启用预算控制</span>
+            </div>
+            <Switch checked={bc?.enabled ?? false} onChange={(v) => updateBudgetControl({ enabled: v })} />
+          </div>
+          {bc?.enabled && (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-xs font-medium text-slate-500 mb-1">预算周期</label>
+                <select className={inputCls} value={bc.period} onChange={(e) => updateBudgetControl({ period: e.target.value as 'monthly' | 'quarterly' | 'yearly' })}>
+                  <option value="monthly">月度</option>
+                  <option value="quarterly">季度</option>
+                  <option value="yearly">年度</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-slate-500 mb-1">超预算处理策略</label>
+                <select className={inputCls} value={bc.overBudgetAction} onChange={(e) => updateBudgetControl({ overBudgetAction: e.target.value as 'warn' | 'block' | 'escalation' })}>
+                  {OVER_LIMIT_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+                </select>
+              </div>
+            </div>
+          )}
+          {bc?.enabled && (
+            <div className="text-xs text-slate-500 dark:text-slate-400 bg-blue-50 dark:bg-blue-900/20 rounded-lg p-3">
+              提示：部门预算和项目预算的额度明细请在「预算管理」页面维护。
+            </div>
+          )}
+        </div>
+      </Card>
+
+      {/* ===== 智能审批路由 ===== */}
+      <Card title="智能审批路由规则" icon={<ClipboardList className="w-5 h-5" />} color="from-violet-500 to-fuchsia-500"
+        subtitle="满足条件（金额阈值/超标/超预算）时自动追加审批节点。规则间为 OR 关系，命中任一即触发。">
+        <div className="space-y-3">
+          {routing.length === 0 && (
+            <div className="text-center py-8 text-slate-400 text-sm">暂无规则，点击下方「添加规则」</div>
+          )}
+          {routing.map((rule) => (
+            <div key={rule.id} className="p-4 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 space-y-3">
+              <div className="flex items-center gap-3">
+                <Switch checked={rule.enabled} onChange={(v) => updateRouting(rule.id, { enabled: v })} />
+                <input
+                  className={`flex-1 ${inputCls} font-medium`}
+                  value={rule.name}
+                  onChange={(e) => updateRouting(rule.id, { name: e.target.value })}
+                  placeholder="规则名称"
+                />
+                <button onClick={() => removeRouting(rule.id)} className="p-1.5 text-slate-400 hover:text-red-500 rounded transition-colors">
+                  <Trash2 className="w-4 h-4" />
+                </button>
+              </div>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                <div>
+                  <label className="block text-xs font-medium text-slate-500 mb-1">金额阈值（元）</label>
+                  <input type="number" className={inputCls} value={rule.amountThreshold} onChange={(e) => updateRouting(rule.id, { amountThreshold: Number(e.target.value) || 0 })} />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-slate-500 mb-1">追加审批节点</label>
+                  <select className={inputCls} value={rule.appendSignerKey} onChange={(e) => updateRouting(rule.id, { appendSignerKey: e.target.value })}>
+                    {(form.signerLevels || []).map((s) => <option key={s.key} value={s.key}>{s.title}</option>)}
+                  </select>
+                </div>
+                <label className="flex items-end gap-2 text-xs text-slate-600 dark:text-slate-300 pb-2">
+                  <input type="checkbox" className="accent-brand-600 w-4 h-4" checked={rule.hasOverStandard} onChange={(e) => updateRouting(rule.id, { hasOverStandard: e.target.checked })} />
+                  存在超标时触发
+                </label>
+                <label className="flex items-end gap-2 text-xs text-slate-600 dark:text-slate-300 pb-2">
+                  <input type="checkbox" className="accent-brand-600 w-4 h-4" checked={rule.hasOverBudget} onChange={(e) => updateRouting(rule.id, { hasOverBudget: e.target.checked })} />
+                  超预算时触发
+                </label>
+              </div>
+            </div>
+          ))}
+          <button onClick={addRouting} className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-brand-600 dark:text-brand-400 bg-brand-50 dark:bg-brand-900/20 hover:bg-brand-100 dark:hover:bg-brand-900/40 rounded-lg transition-colors">
+            <Plus className="w-4 h-4" /> 添加规则
+          </button>
+        </div>
+      </Card>
+    </div>
   )
 }

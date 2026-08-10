@@ -6,9 +6,10 @@ import Link from 'next/link'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
-import { FileText, Mail, Lock, Eye, EyeOff, Loader2, AlertCircle, ArrowRight } from 'lucide-react'
+import { FileText, Mail, Lock, Eye, EyeOff, Loader2, AlertCircle, ArrowRight, Shield, Wallet, UserCircle } from 'lucide-react'
 import { useAuthStore } from '@/lib/auth'
 import { formatApiError } from '@/lib/api'
+import { DEMO_ACCOUNTS, ROLES } from '@/lib/rbac'
 
 // --- 表单校验规则 ---
 const loginSchema = z.object({
@@ -44,11 +45,35 @@ export default function LoginPage() {
     setServerError('')
     try {
       await login(data.email, data.password)
-      // 登录成功，跳转到工作台
       router.push('/dashboard')
     } catch (err) {
       setServerError(formatApiError(err))
     }
+  }
+
+  // 一键演示登录
+  const quickLogin = async (email: string) => {
+    setServerError('')
+    try {
+      // 直接用 setValue + 触发 submit 太复杂，这里直接调 login
+      await login(email, '123456')
+      router.push('/dashboard')
+    } catch (err) {
+      setServerError(formatApiError(err))
+    }
+  }
+
+  // 演示账号图标
+  const roleIcons: Record<string, typeof Shield> = { admin: Shield, finance: Wallet, employee: UserCircle }
+  const roleColorMap: Record<string, string> = {
+    amber: 'border-amber-200 dark:border-amber-800/50 hover:border-amber-400 dark:hover:border-amber-600 bg-amber-50/50 dark:bg-amber-900/10',
+    emerald: 'border-emerald-200 dark:border-emerald-800/50 hover:border-emerald-400 dark:hover:border-emerald-600 bg-emerald-50/50 dark:bg-emerald-900/10',
+    slate: 'border-slate-200 dark:border-slate-700 hover:border-slate-400 dark:hover:border-slate-500 bg-slate-50/50 dark:bg-slate-800/30',
+  }
+  const roleIconColorMap: Record<string, string> = {
+    amber: 'text-amber-600 dark:text-amber-400',
+    emerald: 'text-emerald-600 dark:text-emerald-400',
+    slate: 'text-slate-600 dark:text-slate-400',
   }
 
   return (
@@ -276,14 +301,31 @@ export default function LoginPage() {
             </Link>
           </p>
 
-          {/* 演示账号提示 */}
-          <div className="mt-6 p-4 rounded-xl bg-brand-50 dark:bg-brand-900/20 border border-brand-100 dark:border-brand-800/40">
-            <p className="text-sm text-brand-700 dark:text-brand-300 font-medium mb-1">
-              💡 演示账号
+          {/* 演示账号快速登录 */}
+          <div className="mt-6">
+            <p className="text-sm text-slate-600 dark:text-slate-400 font-medium mb-3">
+              演示账号（密码均为 123456，点击直接登录）
             </p>
-            <p className="text-xs text-brand-600 dark:text-brand-400">
-              邮箱：demo@example.com　密码：123456
-            </p>
+            <div className="grid grid-cols-3 gap-2.5">
+              {DEMO_ACCOUNTS.filter((a) => a.email !== 'demo@example.com').map((acct) => {
+                const Icon = roleIcons[acct.role] || UserCircle
+                const info = ROLES[acct.role]
+                const colorClass = roleColorMap[info.color]
+                const iconColor = roleIconColorMap[info.color]
+                return (
+                  <button
+                    key={acct.email}
+                    onClick={() => quickLogin(acct.email)}
+                    disabled={isSubmitting}
+                    className={`flex flex-col items-center gap-1.5 p-3 rounded-xl border-2 transition-all disabled:opacity-50 disabled:cursor-not-allowed ${colorClass}`}
+                  >
+                    <Icon className={`w-5 h-5 ${iconColor}`} />
+                    <span className="text-xs font-medium text-slate-800 dark:text-slate-200">{info.label}</span>
+                    <span className="text-[10px] text-slate-400 truncate w-full text-center">{acct.email.split('@')[0]}</span>
+                  </button>
+                )
+              })}
+            </div>
           </div>
 
           {/* 返回首页 */}

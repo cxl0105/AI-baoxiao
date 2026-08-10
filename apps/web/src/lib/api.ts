@@ -22,6 +22,7 @@ export interface LoginResult {
     name: string
     email: string
     role: string
+    department?: string
   }
 }
 
@@ -36,9 +37,15 @@ interface AuthConfig {
   skipAuth?: boolean
 }
 
+// --- API 基址配置 ---
+// 当 NEXT_PUBLIC_API_URL 为空或设为 'mock' 时，启用纯前端 Mock 模式（适用于静态托管/内测）
+const RAW_API_URL = process.env.NEXT_PUBLIC_API_URL || ''
+export const MOCK_MODE = !RAW_API_URL || RAW_API_URL === 'mock' || RAW_API_URL === 'disabled'
+
 const instance: AxiosInstance = axios.create({
-  baseURL: process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000/api/v1',
-  timeout: 15000,
+  // Mock 模式下使用占位地址（实际不会发起请求，会被拦截器短路）
+  baseURL: MOCK_MODE ? 'http://0.0.0.0:0/api/v1' : RAW_API_URL,
+  timeout: MOCK_MODE ? 5000 : 15000,
   headers: { 'Content-Type': 'application/json' },
 })
 
@@ -142,6 +149,24 @@ export interface ReimbursementPayload {
 // --- API 方法封装 ---
 export const api = {
   async login(payload: LoginPayload): Promise<LoginResult> {
+    // Mock 模式：直接走演示账号
+    if (MOCK_MODE) {
+      const { DEMO_ACCOUNTS } = await import('./rbac')
+      const acct = DEMO_ACCOUNTS.find((a) => a.email === payload.email && a.password === payload.password)
+      if (acct) {
+        return {
+          token: 'mock-' + acct.role + '-token_' + Math.random().toString(36).slice(2, 10),
+          user: {
+            id: 'user_' + acct.role + '_001',
+            name: acct.name,
+            email: acct.email,
+            role: acct.role,
+            department: acct.department,
+          },
+        }
+      }
+      throw new Error('账号或密码错误（演示账号：admin@example.com / finance@example.com / employee@example.com，密码均 123456）')
+    }
     try {
       const { data } = await instance.post<ApiResponse<LoginResult>>(
         '/auth/login',
@@ -153,20 +178,23 @@ export const api = {
       }
       return data.data
     } catch (err) {
-      // 后端未启动时走本地 Mock：演示账号 demo@example.com / 123456
+      // 后端未启动时走本地 Mock：三角色演示账号
       if (axios.isAxiosError(err) && (err.code === 'ERR_NETWORK' || !err.response)) {
-        if (payload.email === 'demo@example.com' && payload.password === '123456') {
+        const { DEMO_ACCOUNTS } = await import('./rbac')
+        const acct = DEMO_ACCOUNTS.find((a) => a.email === payload.email && a.password === payload.password)
+        if (acct) {
           return {
-            token: 'mock-demo-token_' + Math.random().toString(36).slice(2, 10),
+            token: 'mock-' + acct.role + '-token_' + Math.random().toString(36).slice(2, 10),
             user: {
-              id: 'user_demo_001',
-              name: '演示用户',
-              email: 'demo@example.com',
-              role: 'approver',
+              id: 'user_' + acct.role + '_001',
+              name: acct.name,
+              email: acct.email,
+              role: acct.role,
+              department: acct.department,
             },
           }
         }
-        throw new Error('账号或密码错误（演示账号：demo@example.com / 123456）')
+        throw new Error('账号或密码错误（演示账号：admin@example.com / finance@example.com / employee@example.com，密码均 123456）')
       }
       throw err
     }
@@ -178,6 +206,13 @@ export const api = {
     password: string
     companyName?: string
   }): Promise<{ userId: string; tenantId: string }> {
+    // Mock 模式：模拟注册成功
+    if (MOCK_MODE) {
+      return {
+        userId: 'user_mock_' + Math.random().toString(36).slice(2, 8),
+        tenantId: 'tenant_mock_001',
+      }
+    }
     try {
       const { data } = await instance.post<ApiResponse<{ userId: string; tenantId: string }>>(
         '/auth/register',
@@ -201,6 +236,21 @@ export const api = {
   },
 
   async getMe(): Promise<LoginResult['user']> {
+    // Mock 模式：沿用登录态里的 mock 用户
+    if (MOCK_MODE) {
+      try {
+        if (typeof window !== 'undefined') {
+          const raw = localStorage.getItem('auth-storage')
+          if (raw) {
+            const parsed = JSON.parse(raw)?.state
+            if (parsed?.user) return parsed.user
+          }
+        }
+      } catch {
+        // ignore
+      }
+      throw new Error('登录已过期，请重新登录')
+    }
     try {
       const { data } = await instance.get<ApiResponse<LoginResult['user']>>('/auth/me')
       if (data.code !== 'SUCCESS' || !data.data) {
@@ -228,13 +278,16 @@ export const api = {
   },
 
   async logout(): Promise<void> {
-    try {
-      await instance.post('/auth/logout')
-    } finally {
-      if (typeof window !== 'undefined') {
-        localStorage.removeItem('token')
-        localStorage.removeItem('user')
+    if (!MOCK_MODE) {
+      try {
+        await instance.post('/auth/logout')
+      } catch {
+        // ignore：即使后端不可达也继续清理本地态
       }
+    }
+    if (typeof window !== 'undefined') {
+      localStorage.removeItem('token')
+      localStorage.removeItem('user')
     }
   },
 
@@ -264,6 +317,10 @@ export const api = {
 
   // 创建 / 提交报销单
   async createReimbursement(payload: ReimbursementPayload): Promise<{ id: string; status: string }> {
+    // Mock 模式：直接返回成功
+    if (MOCK_MODE) {
+      return { id: 'R' + Date.now(), status: payload.submit ? 'pending' : 'draft' }
+    }
     try {
       const { data } = await instance.post<ApiResponse<{ id: string; status: string }>>(
         '/reimbursements',

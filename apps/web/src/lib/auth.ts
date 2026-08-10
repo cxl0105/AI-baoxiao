@@ -10,6 +10,7 @@ interface AuthUser {
   name: string
   email: string
   role: string
+  department?: string
 }
 
 interface AuthState {

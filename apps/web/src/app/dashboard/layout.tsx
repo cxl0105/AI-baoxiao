@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useMemo } from 'react'
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import {
@@ -19,27 +19,36 @@ import {
   Search,
   Table2,
   ChevronRight,
+  Shield,
+  Wallet,
+  UserCircle,
+  Stamp,
+  Gauge,
 } from 'lucide-react'
 import { useAuthStore } from '@/lib/auth'
+import { hasPermission, NAV_PERMISSIONS, ROLES, type Role } from '@/lib/rbac'
 
-// --- 导航菜单配置 ---
-const navItems = [
-  { label: '工作台', href: '/dashboard', icon: LayoutDashboard },
+// --- 导航菜单配置（每个菜单项标注所需权限）---
+const navItemsConfig = [
+  { label: '工作台', href: '/dashboard', icon: LayoutDashboard, perm: undefined as any },
   {
     label: '我的报销',
     href: '/dashboard/reimbursements',
     icon: FileText,
+    perm: undefined as any,
     children: [
       { label: '报销单列表', href: '/dashboard/reimbursements' },
       { label: '智能新建（发票识别）', href: '/dashboard/reimbursements/new' },
       { label: '电子表格报销单', href: '/dashboard/reimbursements/spreadsheet', badge: 'Siemens', badgeClass: 'bg-sky-500' },
     ],
   },
-  { label: '待我审批', href: '/dashboard/approvals', icon: CheckSquare, badge: 3 },
-  { label: '审批记录', href: '/dashboard/approval-records', icon: ListChecks },
-  { label: '统计分析', href: '/dashboard/analytics', icon: BarChart3 },
-  { label: '成员管理', href: '/dashboard/members', icon: Users },
-  { label: '系统设置', href: '/dashboard/settings', icon: Settings },
+  { label: '待我审批', href: '/dashboard/approvals', icon: CheckSquare, badge: 3, perm: 'approval:view' as const },
+  { label: '发票池', href: '/dashboard/invoices', icon: Stamp, perm: undefined as any },
+  { label: '预算管理', href: '/dashboard/budgets', icon: Gauge, perm: undefined as any },
+  { label: '审批记录', href: '/dashboard/approval-records', icon: ListChecks, perm: 'approval:records' as const },
+  { label: '统计分析', href: '/dashboard/analytics', icon: BarChart3, perm: 'analytics:view' as const },
+  { label: '成员管理', href: '/dashboard/members', icon: Users, perm: 'members:manage' as const },
+  { label: '系统设置', href: '/dashboard/settings', icon: Settings, perm: 'settings:view' as const },
 ]
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
@@ -48,6 +57,27 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const { user, logout } = useAuthStore()
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [userMenuOpen, setUserMenuOpen] = useState(false)
+
+  // 按角色权限过滤导航菜单
+  const navItems = useMemo(() => {
+    const role = user?.role
+    return navItemsConfig.filter((item) => {
+      if (!item.perm) return true // 无权限要求的菜单（工作台、我的报销）所有人可见
+      return hasPermission(role, item.perm)
+    })
+  }, [user?.role])
+
+  // 角色标签样式
+  const roleInfo = ROLES[(user?.role as Role) || 'employee'] || ROLES.employee
+  const roleColorMap: Record<string, string> = {
+    amber: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300',
+    emerald: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300',
+    slate: 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300',
+  }
+  const roleBadgeClass = roleColorMap[roleInfo.color] || roleColorMap.slate
+
+  // 是否能看到"新建报销"按钮
+  const canCreateReimbursement = hasPermission(user?.role, 'reimbursement:create')
 
   const handleLogout = async () => {
     await logout()
@@ -155,9 +185,14 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               {user?.name?.charAt(0) || 'U'}
             </div>
             <div className="flex-1 min-w-0">
-              <p className="text-sm font-medium text-slate-900 dark:text-white truncate">
-                {user?.name || '用户'}
-              </p>
+              <div className="flex items-center gap-1.5">
+                <p className="text-sm font-medium text-slate-900 dark:text-white truncate">
+                  {user?.name || '用户'}
+                </p>
+                <span className={`inline-flex items-center text-[10px] font-medium px-1.5 py-0.5 rounded ${roleBadgeClass} flex-shrink-0`}>
+                  {roleInfo.label}
+                </span>
+              </div>
               <p className="text-xs text-slate-400 truncate">{user?.email || 'user@example.com'}</p>
             </div>
             <button
@@ -197,7 +232,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           <div className="flex items-center gap-2 sm:gap-3">
             <Link
               href="/dashboard/reimbursements/new"
-              className="hidden sm:inline-flex items-center gap-1.5 px-4 py-2 text-sm font-medium text-white bg-brand-600 hover:bg-brand-700 rounded-lg transition-colors"
+              className={`hidden sm:inline-flex items-center gap-1.5 px-4 py-2 text-sm font-medium text-white bg-brand-600 hover:bg-brand-700 rounded-lg transition-colors ${canCreateReimbursement ? '' : 'pointer-events-none opacity-0'}`}
             >
               <FileText className="w-4 h-4" />
               新建报销
@@ -226,17 +261,24 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                   <div className="fixed inset-0 z-30" onClick={() => setUserMenuOpen(false)} />
                   <div className="absolute right-0 top-full mt-2 w-56 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl shadow-lg py-2 z-40">
                     <div className="px-4 py-2 border-b border-slate-100 dark:border-slate-700">
-                      <p className="text-sm font-medium text-slate-900 dark:text-white">{user?.name || '用户'}</p>
+                      <div className="flex items-center gap-2">
+                        <p className="text-sm font-medium text-slate-900 dark:text-white">{user?.name || '用户'}</p>
+                        <span className={`inline-flex items-center text-[10px] font-medium px-1.5 py-0.5 rounded ${roleBadgeClass}`}>
+                          {roleInfo.label}
+                        </span>
+                      </div>
                       <p className="text-xs text-slate-400 truncate">{user?.email || ''}</p>
                     </div>
-                    <Link
-                      href="/dashboard/settings"
-                      onClick={() => setUserMenuOpen(false)}
-                      className="flex items-center gap-2 px-4 py-2 text-sm text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700"
-                    >
-                      <Settings className="w-4 h-4" />
-                      账户设置
-                    </Link>
+                    {hasPermission(user?.role, 'settings:view') && (
+                      <Link
+                        href="/dashboard/settings"
+                        onClick={() => setUserMenuOpen(false)}
+                        className="flex items-center gap-2 px-4 py-2 text-sm text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700"
+                      >
+                        <Settings className="w-4 h-4" />
+                        账户设置
+                      </Link>
+                    )}
                     <button
                       onClick={handleLogout}
                       className="w-full flex items-center gap-2 px-4 py-2 text-sm text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20"
