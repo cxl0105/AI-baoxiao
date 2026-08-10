@@ -60,6 +60,7 @@ import {
   computeApprovalRouting,
   inferLevelFromRole,
 } from '@/lib/expense-standard'
+import { useConciergeStore } from '@/lib/concierge'
 
 /* ======================================================================
    类型定义
@@ -347,6 +348,36 @@ export default function SpreadsheetReimbursementPage() {
       hasOverBudget(budgetCheckResults) || hasEscalationBudget(budgetCheckResults),
     )
   }, [isHydrated, policy, grandTotal, overStandardIssues, budgetCheckResults])
+
+  // ===== Concierge AI 助手：更新报销单填写状态 =====
+  const setConciergeFormState = useConciergeStore((s) => s.setFormState)
+  const clearConciergeFormState = useConciergeStore((s) => s.clearFormState)
+  useEffect(() => {
+    if (!isHydrated) return
+    // 检查不完整字段
+    const incompleteFields: string[] = []
+    if (!reportName.trim()) incompleteFields.push('报销单标题')
+    if (!startDate || !endDate) incompleteFields.push('出差日期')
+    if (!originAddr || !destAddr) incompleteFields.push('出发地/目的地')
+    if (rows.length === 0) incompleteFields.push('费用明细')
+    rows.forEach((row, idx) => {
+      if (!row.date) incompleteFields.push(`第${idx + 1}行日期`)
+      if (!row.note.trim()) incompleteFields.push(`第${idx + 1}行说明`)
+    })
+
+    setConciergeFormState({
+      title: reportName,
+      rowsCount: rows.length,
+      totalAmount: grandTotal,
+      hasInvoice: rows.some((r) => r.invoiceCount > 0),
+      hasAllocation: allocationConfig.enabled,
+      overStandard: overStandardIssues.length > 0,
+      overBudget: hasOverBudget(budgetCheckResults),
+      incompleteFields: incompleteFields.slice(0, 5),
+    })
+    // 组件卸载时清除
+    return () => clearConciergeFormState()
+  }, [isHydrated, reportName, rows, grandTotal, allocationConfig.enabled, overStandardIssues, budgetCheckResults, setConciergeFormState, clearConciergeFormState])
 
   // ===== 签字区 =====
   const [signatures, setSignatures] = useState<SignatureState>({ signedMap: {} })

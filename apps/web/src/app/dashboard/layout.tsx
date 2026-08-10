@@ -27,6 +27,8 @@ import {
 } from 'lucide-react'
 import { useAuthStore } from '@/lib/auth'
 import { hasPermission, NAV_PERMISSIONS, ROLES, type Role } from '@/lib/rbac'
+import Concierge from '@/components/Concierge'
+import { useConciergeStore, type ConciergeContext } from '@/lib/concierge'
 
 // --- 导航菜单配置（每个菜单项标注所需权限）---
 const navItemsConfig = [
@@ -55,8 +57,28 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const pathname = usePathname()
   const router = useRouter()
   const { user, logout } = useAuthStore()
+  const formState = useConciergeStore((s) => s.formState)
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [userMenuOpen, setUserMenuOpen] = useState(false)
+
+  // 构建 Concierge 上下文
+  const conciergeContext: ConciergeContext = useMemo(() => {
+    let page: ConciergeContext['page'] = 'other'
+    if (pathname === '/dashboard') page = 'dashboard'
+    else if (pathname.startsWith('/dashboard/reimbursements/spreadsheet')) page = 'spreadsheet'
+    else if (pathname.startsWith('/dashboard/reimbursements')) page = 'reimbursements'
+    else if (pathname.startsWith('/dashboard/invoices')) page = 'invoices'
+    else if (pathname.startsWith('/dashboard/approvals')) page = 'approvals'
+    else if (pathname.startsWith('/dashboard/approval-records')) page = 'approvals'
+    else if (pathname.startsWith('/dashboard/analytics')) page = 'analytics'
+    else if (pathname.startsWith('/dashboard/budgets')) page = 'budgets'
+    else if (pathname.startsWith('/dashboard/settings')) page = 'settings'
+    return {
+      page,
+      role: user?.role || 'employee',
+      formState: page === 'spreadsheet' ? formState : undefined,
+    }
+  }, [pathname, user?.role, formState])
 
   // 按角色权限过滤导航菜单
   const navItems = useMemo(() => {
@@ -296,6 +318,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         {/* 页面内容 */}
         <main className="flex-1 p-4 sm:p-6 lg:p-8 overflow-y-auto">{children}</main>
       </div>
+
+      {/* Concierge AI 智能助手 */}
+      <Concierge context={conciergeContext} />
     </div>
   )
 }
