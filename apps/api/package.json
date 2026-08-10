@@ -1,0 +1,35 @@
+{
+  "name": "@apps/api",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "lint": "eslint src --ext .ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "hono": "^4.4.0",
+    "@hono/node-server": "^1.11.0",
+    "@hono/zod-validator": "^0.2.2",
+    "zod": "^3.23.0",
+    "bcryptjs": "^2.4.3",
+    "jsonwebtoken": "^9.0.2",
+    "pg": "^8.11.5",
+    "drizzle-orm": "^0.30.10",
+    "redis": "^4.6.14",
+    "@upstash/queue": "^1.0.0",
+    "axios": "^1.7.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/bcryptjs": "^2.4.6",
+    "@types/jsonwebtoken": "^9.0.6",
+    "@types/pg": "^8.11.6",
+    "drizzle-kit": "^0.21.0",
+    "tsx": "^4.11.0",
+    "typescript": "^5.4.0",
+    "eslint": "^8.57.0"
+  }
+}

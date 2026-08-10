@@ -1,0 +1,22 @@
+{
+  "name": "@packages/db",
+  "version": "1.0.0",
+  "private": true,
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "generate": "drizzle-kit generate:pg",
+    "migrate": "drizzle-kit push:pg",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "drizzle-orm": "^0.30.10",
+    "pg": "^8.11.5"
+  },
+  "devDependencies": {
+    "@types/pg": "^8.11.6",
+    "drizzle-kit": "^0.21.0",
+    "typescript": "^5.4.0"
+  }
+}
