@@ -3,9 +3,14 @@
   "version": "1.0.0",
   "description": "AI 智能化报销系统 - SaaS 多租户平台，支持 Web 端和移动端",
   "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
   "scripts": {
     "dev": "turbo run dev",
     "build": "turbo run build",
+    "build:web": "turbo run build --filter=@apps/web",
     "lint": "turbo run lint",
     "typecheck": "turbo run typecheck",
     "format": "prettier --write \"**/*.{ts,tsx,md,json}\"",
@@ -19,6 +24,7 @@
     "@types/node": "^20.11.0"
   },
   "engines": {
-    "node": ">=20.0.0"
-  }
+    "node": ">=18.17.0"
+  },
+  "packageManager": "npm@10.0.0"
 }
