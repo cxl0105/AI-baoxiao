@@ -24,9 +24,10 @@
     "@types/node": "^20.11.0"
   },
   "engines": {
-    "node": "18.x"
+    "node": "20.x",
+    "npm": "10.x"
   },
-  "packageManager": "npm@10.0.0",
+  "packageManager": "npm@10.8.2",
   "overrides": {
     "react": "^18.3.0",
     "react-dom": "^18.3.0",
