@@ -86,10 +86,11 @@ export const DEMO_ACCOUNTS: Array<{
   role: Role
   name: string
   department: string
+  phone?: string
 }> = [
-  { email: 'admin@example.com', password: '123456', role: 'admin', name: '管理员', department: '管理层' },
-  { email: 'finance@example.com', password: '123456', role: 'finance', name: '财务专员', department: '财务部' },
-  { email: 'employee@example.com', password: '123456', role: 'employee', name: '员工小李', department: '研发部' },
+  { email: 'admin@example.com', password: '123456', role: 'admin', name: '管理员', department: '管理层', phone: '13800000001' },
+  { email: 'finance@example.com', password: '123456', role: 'finance', name: '财务专员', department: '财务部', phone: '13800000002' },
+  { email: 'employee@example.com', password: '123456', role: 'employee', name: '员工小李', department: '研发部', phone: '13800000003' },
   // 兼容旧 demo 账号
-  { email: 'demo@example.com', password: '123456', role: 'employee', name: '演示用户', department: '研发部' },
+  { email: 'demo@example.com', password: '123456', role: 'employee', name: '演示用户', department: '研发部', phone: '13800000004' },
 ]

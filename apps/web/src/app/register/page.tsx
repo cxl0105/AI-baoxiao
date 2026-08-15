@@ -12,6 +12,7 @@ import {
   Lock,
   User,
   Building2,
+  Phone,
   Eye,
   EyeOff,
   Loader2,
@@ -25,7 +26,15 @@ import { api, formatApiError } from '@/lib/api'
 const registerSchema = z
   .object({
     name: z.string().min(2, '姓名至少 2 个字符').max(50, '姓名最多 50 个字符'),
-    email: z.string().min(1, '请输入邮箱地址').email('邮箱格式不正确，请检查'),
+    phone: z
+      .string()
+      .min(1, '请输入手机号')
+      .length(11, '手机号必须为 11 位数字')
+      .regex(/^1[3-9]\d{9}$/, '手机号格式不正确，请输入中国大陆手机号'),
+    email: z
+      .union([z.string().email('邮箱格式不正确，请检查'), z.literal('')])
+      .optional()
+      .default(''),
     companyName: z.string().min(2, '企业名称至少 2 个字符').max(100, '企业名称最多 100 个字符'),
     password: z
       .string()
@@ -60,7 +69,15 @@ export default function RegisterPage() {
     formState: { errors, isSubmitting },
   } = useForm<RegisterForm>({
     resolver: zodResolver(registerSchema),
-    defaultValues: { name: '', email: '', companyName: '', password: '', confirmPassword: '', agree: false as unknown as true },
+    defaultValues: {
+      name: '',
+      phone: '',
+      email: '',
+      companyName: '',
+      password: '',
+      confirmPassword: '',
+      agree: false as unknown as true,
+    },
   })
 
   const password = watch('password')
@@ -84,12 +101,12 @@ export default function RegisterPage() {
     try {
       await api.register({
         name: data.name,
-        email: data.email,
+        phone: data.phone,
+        email: data.email || undefined,
         password: data.password,
         companyName: data.companyName,
       })
       setSuccess(true)
-      // 2 秒后跳转登录页
       setTimeout(() => router.push('/login'), 2000)
     } catch (err) {
       setServerError(formatApiError(err))
@@ -248,10 +265,40 @@ export default function RegisterPage() {
               )}
             </div>
 
-            {/* 邮箱 */}
+            {/* 手机号（必填） */}
+            <div>
+              <label htmlFor="phone" className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">
+                手机号码
+                <span className="ml-0.5 text-red-500">*</span>
+              </label>
+              <div className="relative">
+                <Phone className="absolute left-3.5 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
+                <input
+                  id="phone"
+                  type="tel"
+                  inputMode="numeric"
+                  autoComplete="tel"
+                  placeholder="请输入 11 位手机号"
+                  maxLength={11}
+                  {...register('phone')}
+                  className={`w-full pl-11 pr-4 py-3 rounded-xl border bg-white dark:bg-slate-800 text-slate-900 dark:text-white placeholder:text-slate-400 transition-colors focus:outline-none focus:ring-2 focus:ring-brand-500/20 ${
+                    errors.phone ? 'border-red-300 dark:border-red-700 focus:border-red-500' : 'border-slate-200 dark:border-slate-700 focus:border-brand-500'
+                  }`}
+                />
+              </div>
+              {errors.phone && (
+                <p className="mt-1.5 text-sm text-red-500 flex items-center gap-1">
+                  <AlertCircle className="w-3.5 h-3.5" />
+                  {errors.phone.message}
+                </p>
+              )}
+            </div>
+
+            {/* 邮箱（选填） */}
             <div>
               <label htmlFor="email" className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">
                 企业邮箱
+                <span className="ml-1 text-xs text-slate-400 font-normal">（选填）</span>
               </label>
               <div className="relative">
                 <Mail className="absolute left-3.5 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />

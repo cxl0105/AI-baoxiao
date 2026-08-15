@@ -6,57 +6,90 @@ import Link from 'next/link'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
-import { FileText, Mail, Lock, Eye, EyeOff, Loader2, AlertCircle, ArrowRight, Shield, Wallet, UserCircle } from 'lucide-react'
+import {
+  FileText,
+  Mail,
+  Lock,
+  Eye,
+  EyeOff,
+  Loader2,
+  AlertCircle,
+  ArrowRight,
+  Shield,
+  Wallet,
+  UserCircle,
+  Phone,
+} from 'lucide-react'
 import { useAuthStore } from '@/lib/auth'
 import { formatApiError } from '@/lib/api'
 import { DEMO_ACCOUNTS, ROLES } from '@/lib/rbac'
 
-// --- 表单校验规则 ---
-const loginSchema = z.object({
-  email: z
-    .string()
-    .min(1, '请输入邮箱地址')
-    .email('邮箱格式不正确，请检查'),
-  password: z
-    .string()
-    .min(1, '请输入密码')
-    .min(6, '密码至少 6 个字符'),
-  remember: z.boolean().default(true),
-})
+type LoginMode = 'phone' | 'email'
 
-type LoginForm = z.infer<typeof loginSchema>
+// --- 表单校验规则 ---
+const makeLoginSchema = (mode: LoginMode) =>
+  z.object({
+    identifier:
+      mode === 'phone'
+        ? z
+            .string()
+            .min(1, '请输入手机号')
+            .length(11, '手机号必须为 11 位数字')
+            .regex(/^1[3-9]\d{9}$/, '手机号格式不正确，请输入中国大陆手机号')
+        : z
+            .string()
+            .min(1, '请输入邮箱地址')
+            .email('邮箱格式不正确，请检查'),
+    password: z
+      .string()
+      .min(1, '请输入密码')
+      .min(6, '密码至少 6 个字符'),
+    remember: z.boolean().default(true),
+  })
+
+type LoginForm = z.infer<ReturnType<typeof makeLoginSchema>>
 
 export default function LoginPage() {
   const router = useRouter()
   const login = useAuthStore((s) => s.login)
+  const [mode, setMode] = useState<LoginMode>('phone')
   const [showPassword, setShowPassword] = useState(false)
   const [serverError, setServerError] = useState('')
 
+  const schema = makeLoginSchema(mode)
   const {
     register,
     handleSubmit,
+    reset,
     formState: { errors, isSubmitting },
   } = useForm<LoginForm>({
-    resolver: zodResolver(loginSchema),
-    defaultValues: { email: '', password: '', remember: true },
+    resolver: zodResolver(schema),
+    defaultValues: { identifier: '', password: '', remember: true },
   })
+
+  // 切换 Tab 时清理已输入内容和错误
+  const switchMode = (next: LoginMode) => {
+    if (next === mode) return
+    setMode(next)
+    setServerError('')
+    reset({ identifier: '', password: '', remember: true })
+  }
 
   const onSubmit = async (data: LoginForm) => {
     setServerError('')
     try {
-      await login(data.email, data.password)
+      await login(data.identifier, data.password)
       router.push('/dashboard')
     } catch (err) {
       setServerError(formatApiError(err))
     }
   }
 
-  // 一键演示登录
-  const quickLogin = async (email: string) => {
+  // 一键演示登录（根据当前 Tab 选手机号或邮箱）
+  const quickLogin = async (acct: typeof DEMO_ACCOUNTS[number]) => {
     setServerError('')
     try {
-      // 直接用 setValue + 触发 submit 太复杂，这里直接调 login
-      await login(email, '123456')
+      await login(mode === 'phone' ? (acct.phone || acct.email) : acct.email, '123456')
       router.push('/dashboard')
     } catch (err) {
       setServerError(formatApiError(err))
@@ -176,32 +209,69 @@ export default function LoginPage() {
             </div>
           )}
 
+          {/* Tab：手机号 / 邮箱 */}
+          <div className="mb-6 rounded-xl bg-slate-100 dark:bg-slate-800/50 p-1 grid grid-cols-2 gap-1">
+            <button
+              type="button"
+              onClick={() => switchMode('phone')}
+              className={`flex items-center justify-center gap-2 py-2.5 rounded-lg text-sm font-medium transition-all ${
+                mode === 'phone'
+                  ? 'bg-white dark:bg-slate-700 text-brand-600 dark:text-brand-400 shadow-sm ring-1 ring-black/5'
+                  : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'
+              }`}
+            >
+              <Phone className="w-4 h-4" />
+              手机登录
+            </button>
+            <button
+              type="button"
+              onClick={() => switchMode('email')}
+              className={`flex items-center justify-center gap-2 py-2.5 rounded-lg text-sm font-medium transition-all ${
+                mode === 'email'
+                  ? 'bg-white dark:bg-slate-700 text-brand-600 dark:text-brand-400 shadow-sm ring-1 ring-black/5'
+                  : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'
+              }`}
+            >
+              <Mail className="w-4 h-4" />
+              邮箱登录
+            </button>
+          </div>
+
           {/* 登录表单 */}
           <form onSubmit={handleSubmit(onSubmit)} className="space-y-5" noValidate>
-            {/* 邮箱 */}
+            {/* 手机号 / 邮箱输入 */}
             <div>
-              <label htmlFor="email" className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">
-                邮箱地址
+              <label
+                htmlFor="identifier"
+                className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5"
+              >
+                {mode === 'phone' ? '手机号码' : '邮箱地址'}
               </label>
               <div className="relative">
-                <Mail className="absolute left-3.5 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
+                {mode === 'phone' ? (
+                  <Phone className="absolute left-3.5 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
+                ) : (
+                  <Mail className="absolute left-3.5 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
+                )}
                 <input
-                  id="email"
-                  type="email"
-                  autoComplete="email"
-                  placeholder="you@company.com"
-                  {...register('email')}
+                  id="identifier"
+                  type={mode === 'phone' ? 'tel' : 'email'}
+                  inputMode={mode === 'phone' ? 'numeric' : 'email'}
+                  autoComplete={mode === 'phone' ? 'tel' : 'email'}
+                  placeholder={mode === 'phone' ? '请输入 11 位手机号' : 'you@company.com'}
+                  maxLength={mode === 'phone' ? 11 : undefined}
+                  {...register('identifier')}
                   className={`w-full pl-11 pr-4 py-3 rounded-xl border bg-white dark:bg-slate-800 text-slate-900 dark:text-white placeholder:text-slate-400 transition-colors focus:outline-none focus:ring-2 focus:ring-brand-500/20 ${
-                    errors.email
+                    errors.identifier
                       ? 'border-red-300 dark:border-red-700 focus:border-red-500'
                       : 'border-slate-200 dark:border-slate-700 focus:border-brand-500'
                   }`}
                 />
               </div>
-              {errors.email && (
+              {errors.identifier && (
                 <p className="mt-1.5 text-sm text-red-500 flex items-center gap-1">
                   <AlertCircle className="w-3.5 h-3.5" />
-                  {errors.email.message}
+                  {errors.identifier.message}
                 </p>
               )}
             </div>
@@ -315,13 +385,15 @@ export default function LoginPage() {
                 return (
                   <button
                     key={acct.email}
-                    onClick={() => quickLogin(acct.email)}
+                    onClick={() => quickLogin(acct)}
                     disabled={isSubmitting}
                     className={`flex flex-col items-center gap-1.5 p-3 rounded-xl border-2 transition-all disabled:opacity-50 disabled:cursor-not-allowed ${colorClass}`}
                   >
                     <Icon className={`w-5 h-5 ${iconColor}`} />
                     <span className="text-xs font-medium text-slate-800 dark:text-slate-200">{info.label}</span>
-                    <span className="text-[10px] text-slate-400 truncate w-full text-center">{acct.email.split('@')[0]}</span>
+                    <span className="text-[10px] text-slate-400 truncate w-full text-center">
+                      {mode === 'phone' ? (acct.phone || '').slice(0, 3) + '****' + (acct.phone || '').slice(-4) : acct.email.split('@')[0]}
+                    </span>
                   </button>
                 )
               })}

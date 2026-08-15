@@ -11,7 +11,10 @@ export interface ApiResponse<T = unknown> {
 }
 
 export interface LoginPayload {
-  email: string
+  /** 登录标识：手机号或邮箱 */
+  identifier: string
+  /** 兼容旧字段：优先使用 identifier */
+  email?: string
   password: string
 }
 
@@ -21,6 +24,7 @@ export interface LoginResult {
     id: string
     name: string
     email: string
+    phone?: string
     role: string
     department?: string
   }
@@ -149,10 +153,18 @@ export interface ReimbursementPayload {
 // --- API 方法封装 ---
 export const api = {
   async login(payload: LoginPayload): Promise<LoginResult> {
+    const identifier = payload.identifier || payload.email || ''
+    const loginPayload = { identifier, password: payload.password }
+    // 判斷是手機還是郵箱
+    const isPhone = (s: string) => /^1[3-9]\d{9}$/.test(s.trim())
+
     // Mock 模式：直接走演示账号
     if (MOCK_MODE) {
       const { DEMO_ACCOUNTS } = await import('./rbac')
-      const acct = DEMO_ACCOUNTS.find((a) => a.email === payload.email && a.password === payload.password)
+      const acct = DEMO_ACCOUNTS.find((a) => {
+        if (isPhone(identifier)) return a.phone === identifier && a.password === payload.password
+        return a.email === identifier && a.password === payload.password
+      })
       if (acct) {
         return {
           token: 'mock-' + acct.role + '-token_' + Math.random().toString(36).slice(2, 10),
@@ -160,17 +172,18 @@ export const api = {
             id: 'user_' + acct.role + '_001',
             name: acct.name,
             email: acct.email,
+            phone: acct.phone,
             role: acct.role,
             department: acct.department,
           },
         }
       }
-      throw new Error('账号或密码错误（演示账号：admin@example.com / finance@example.com / employee@example.com，密码均 123456）')
+      throw new Error('账号或密码错误（演示账号：手机号 13800000001 / 13800000002 / 13800000003，或邮箱 admin@example.com 等，密码均 123456）')
     }
     try {
       const { data } = await instance.post<ApiResponse<LoginResult>>(
         '/auth/login',
-        payload,
+        loginPayload,
         { skipAuth: true } as any
       )
       if (data.code !== 'SUCCESS' || !data.data) {
@@ -181,7 +194,10 @@ export const api = {
       // 后端未启动时走本地 Mock：三角色演示账号
       if (axios.isAxiosError(err) && (err.code === 'ERR_NETWORK' || !err.response)) {
         const { DEMO_ACCOUNTS } = await import('./rbac')
-        const acct = DEMO_ACCOUNTS.find((a) => a.email === payload.email && a.password === payload.password)
+        const acct = DEMO_ACCOUNTS.find((a) => {
+          if (isPhone(identifier)) return a.phone === identifier && a.password === payload.password
+          return a.email === identifier && a.password === payload.password
+        })
         if (acct) {
           return {
             token: 'mock-' + acct.role + '-token_' + Math.random().toString(36).slice(2, 10),
@@ -189,12 +205,13 @@ export const api = {
               id: 'user_' + acct.role + '_001',
               name: acct.name,
               email: acct.email,
+              phone: acct.phone,
               role: acct.role,
               department: acct.department,
             },
           }
         }
-        throw new Error('账号或密码错误（演示账号：admin@example.com / finance@example.com / employee@example.com，密码均 123456）')
+        throw new Error('账号或密码错误（演示账号：手机号 13800000001 / 13800000002 / 13800000003，或邮箱 admin@example.com 等，密码均 123456）')
       }
       throw err
     }
@@ -202,7 +219,8 @@ export const api = {
 
   async register(payload: {
     name: string
-    email: string
+    email?: string
+    phone?: string
     password: string
     companyName?: string
   }): Promise<{ userId: string; tenantId: string }> {

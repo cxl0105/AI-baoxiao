@@ -26,6 +26,10 @@ import {
   Ban,
   Plus,
   ChevronRight,
+  ShieldCheck,
+  ScanSearch,
+  ChevronDown,
+  Info as InfoIcon,
 } from 'lucide-react'
 import {
   generateMockList,
@@ -36,6 +40,7 @@ import {
   type ApprovalStep,
 } from '@/lib/reimbursements'
 import type { ExpenseCategory } from '@/lib/api'
+import { runAudit, type AuditResult, type AuditCheckItem } from '@/lib/audit-engine'
 
 const CATEGORY_LABEL: Record<ExpenseCategory, string> = {
   travel: '差旅住宿', transport: '交通出行', meal: '餐饮',
@@ -63,6 +68,11 @@ export default function ReimbursementDetailPage() {
   }, [params.id])
 
   const statusMeta = STATUS_META[detail.status]
+
+  // 智能审核结果
+  const auditResult = useMemo<AuditResult>(() => {
+    return runAudit({ detail })
+  }, [detail])
 
   // --- 状态动作（UI 模拟即可） ---
   const doAction = async (
@@ -243,6 +253,9 @@ export default function ReimbursementDetailPage() {
               </table>
             </div>
           </Section>
+
+          {/* 智能审核结果 */}
+          <AuditPanel result={auditResult} />
 
           {/* 附件 / 发票 */}
           <Section
@@ -601,6 +614,116 @@ function Timeline({ steps }: { steps: ApprovalStep[] }) {
         )
       })}
     </ol>
+  )
+}
+
+// ===== 智能审核面板 =====
+function AuditPanel({ result }: { result: AuditResult }) {
+  const [expanded, setExpanded] = useState(true)
+  const { summary } = result
+
+  const overallConfig = {
+    pass: { bg: 'from-green-500 to-emerald-600', icon: <CheckCircle2 className="w-5 h-5" />, label: '审核通过', ring: 'ring-green-200 dark:ring-green-800' },
+    warn: { bg: 'from-amber-500 to-orange-500', icon: <AlertTriangle className="w-5 h-5" />, label: '存在警告', ring: 'ring-amber-200 dark:ring-amber-800' },
+    fail: { bg: 'from-red-500 to-rose-600', icon: <XCircle className="w-5 h-5" />, label: '审核不通过', ring: 'ring-red-200 dark:ring-red-800' },
+  } as const
+  const cfg = overallConfig[summary.overallStatus]
+
+  return (
+    <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 overflow-hidden">
+      {/* 头部：总览 */}
+      <div className={`bg-gradient-to-r ${cfg.bg} px-5 sm:px-6 py-4 text-white`}>
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-white/20 backdrop-blur-sm flex items-center justify-center">
+              <ScanSearch className="w-5 h-5" />
+            </div>
+            <div>
+              <h2 className="font-semibold text-base">智能审核</h2>
+              <p className="text-xs text-white/80 mt-0.5">
+                共 {summary.total} 项检查 · 通过 {summary.passed} · 警告 {summary.warnings} · 不通过 {summary.failed}
+                {summary.skipped > 0 && ` · 跳过 ${summary.skipped}`}
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-4">
+            <div className="text-right">
+              <p className="text-xs text-white/60">审核评分</p>
+              <p className="text-2xl font-bold">{summary.score}<span className="text-sm font-normal text-white/60">/100</span></p>
+            </div>
+            <button
+              onClick={() => setExpanded(!expanded)}
+              className="p-2 rounded-lg bg-white/15 hover:bg-white/25 transition-colors"
+              aria-label={expanded ? '收起' : '展开'}
+            >
+              <ChevronDown className={`w-4 h-4 transition-transform ${expanded ? 'rotate-180' : ''}`} />
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* 逐条结果 */}
+      {expanded && (
+        <div className="p-4 sm:p-5 space-y-2">
+          {result.items.map((item) => (
+            <AuditCheckRow key={item.id} item={item} />
+          ))}
+          {/* 底部总结 */}
+          <div className={`mt-3 pt-3 border-t border-slate-100 dark:border-slate-800 flex items-center gap-2 text-sm`}>
+            <div className={`w-7 h-7 rounded-lg flex items-center justify-center ${cfg.bg.includes('green') ? 'bg-green-100 dark:bg-green-900/30 text-green-600 dark:text-green-300' : cfg.bg.includes('amber') ? 'bg-amber-100 dark:bg-amber-900/30 text-amber-600 dark:text-amber-300' : 'bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-300'}`}>
+              {cfg.icon}
+            </div>
+            <span className="font-medium text-slate-700 dark:text-slate-200">
+              {cfg.label}
+            </span>
+            <span className="text-slate-400 text-xs">
+              · 审核结果仅供参考，最终以人工审批为准
+            </span>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function AuditCheckRow({ item }: { item: AuditCheckItem }) {
+  const [showDetail, setShowDetail] = useState(false)
+  const hasDetail = !!item.detail
+
+  const statusConfig = {
+    pass: { icon: <CheckCircle2 className="w-4 h-4" />, color: 'text-green-500', bg: 'bg-green-50 dark:bg-green-900/20', border: 'border-green-100 dark:border-green-900/30', label: '通过' },
+    warn: { icon: <AlertTriangle className="w-4 h-4" />, color: 'text-amber-500', bg: 'bg-amber-50 dark:bg-amber-900/20', border: 'border-amber-100 dark:border-amber-900/30', label: '警告' },
+    fail: { icon: <XCircle className="w-4 h-4" />, color: 'text-red-500', bg: 'bg-red-50 dark:bg-red-900/20', border: 'border-red-100 dark:border-red-900/30', label: '不通过' },
+    skip: { icon: <InfoIcon className="w-4 h-4" />, color: 'text-slate-400', bg: 'bg-slate-50 dark:bg-slate-800/40', border: 'border-slate-100 dark:border-slate-800', label: '跳过' },
+  } as const
+  const cfg = statusConfig[item.status]
+
+  return (
+    <div className={`rounded-xl border ${cfg.border} ${cfg.bg} overflow-hidden`}>
+      <button
+        onClick={() => hasDetail && setShowDetail(!showDetail)}
+        className={`w-full flex items-center gap-3 px-4 py-3 text-left ${hasDetail ? 'cursor-pointer hover:bg-black/[0.02] dark:hover:bg-white/[0.02]' : 'cursor-default'}`}
+      >
+        <div className={`${cfg.color} flex-shrink-0`}>{cfg.icon}</div>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-medium text-slate-400">{item.categoryLabel}</span>
+            <span className={`text-[10px] px-1.5 py-0.5 rounded ${cfg.bg} ${cfg.color} font-medium`}>{cfg.label}</span>
+          </div>
+          <p className="text-sm text-slate-700 dark:text-slate-200 mt-0.5 truncate">{item.message}</p>
+        </div>
+        {hasDetail && (
+          <ChevronDown className={`w-4 h-4 text-slate-400 flex-shrink-0 transition-transform ${showDetail ? 'rotate-180' : ''}`} />
+        )}
+      </button>
+      {hasDetail && showDetail && (
+        <div className="px-4 pb-3 pt-0">
+          <pre className="text-xs text-slate-500 dark:text-slate-400 whitespace-pre-wrap font-mono leading-relaxed pl-7">
+            {item.detail}
+          </pre>
+        </div>
+      )}
+    </div>
   )
 }
 
