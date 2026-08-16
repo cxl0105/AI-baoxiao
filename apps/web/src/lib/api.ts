@@ -58,7 +58,13 @@ const instance: AxiosInstance = axios.create({
 instance.interceptors.request.use((config: any): any => {
   const cfg = config as AxiosRequestConfig & AuthConfig
   if (!cfg.skipAuth) {
-    const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null
+    let token = typeof window !== 'undefined' ? localStorage.getItem('token') : null
+    if (!token && typeof window !== 'undefined') {
+      try {
+        const raw = localStorage.getItem('auth-storage')
+        if (raw) token = JSON.parse(raw)?.state?.token || null
+      } catch { /* ignore */ }
+    }
     if (token) {
       cfg.headers = { ...(cfg.headers || {}), Authorization: `Bearer ${token}` } as any
     }
