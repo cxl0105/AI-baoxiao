@@ -13,6 +13,7 @@
  */
 
 import type { ReimbursementDetail } from './reimbursements'
+import { formatMoney } from './num'
 import {
   checkReportStandards,
   checkBudget,
@@ -86,7 +87,7 @@ function makeId(category: string, index: number): string {
 }
 
 function fmtMoney(n: number): string {
-  return `¥${n.toFixed(2)}`
+  return formatMoney(n)
 }
 
 // --- 主审核函数 ---

@@ -1,6 +1,7 @@
 import axios, { AxiosError, type AxiosInstance, type AxiosRequestConfig } from 'axios'
 import { readOcrConfigSync } from './settings'
 import { runRealOcrIfEnabled, runBackendProxyOcr, type NormalizedOcrResult, normalizeOcrResult } from './ocr-providers'
+import { taxAmountFromTotal } from './num'
 
 // --- 类型定义 ---
 export interface ApiResponse<T = unknown> {
@@ -728,7 +729,7 @@ async function mockOcr(file: File): Promise<OcrInvoice & NormalizedOcrResult> {
   const parsed = await smartParse(file)
   const amount = parsed.amount!
   // 简易模拟税额（13% 税率取两位小数；无信息时 ≈ 0）
-  const tax = +(Math.max(0, amount / 1.13 * 0.13) || 0).toFixed(2)
+  const tax = +(Math.max(0, taxAmountFromTotal(amount, 13)) || 0).toFixed(2)
   return {
     id: '',
     fileName: file.name,
