@@ -1,51 +1,97 @@
 import { Hono } from 'hono'
+import { z } from 'zod'
+import { zValidator } from '@hono/zod-validator'
+import bcrypt from 'bcryptjs'
+import { eq, or, ilike, desc } from 'drizzle-orm'
+import { db } from '../db'
+import { users, companies } from '../db/schema'
+import { authMiddleware, currentUser, isAdminOrFinance } from '../lib/auth'
 
 const user = new Hono()
+user.use('*', authMiddleware)
 
+const createUserSchema = z.object({
+  name: z.string().min(2, '姓名至少 2 个字符'),
+  phone: z.string().length(11, '手机号必须为 11 位数字').regex(/^1[3-9]\d{9}$/, '手机号格式不正确'),
+  email: z.string().optional().or(z.literal('')),
+  password: z.string().min(6, '密码至少 6 个字符').optional(),
+  role: z.enum(['admin', 'finance', 'employee']).default('employee'),
+  department: z.string().optional(),
+})
+
+function toUser(u: any) {
+  return {
+    id: u.id,
+    name: u.name,
+    email: u.email || '',
+    phone: u.phone || '',
+    role: u.role,
+    department: u.department || '',
+    status: 'active',
+    createdAt: u.createdAt,
+  }
+}
+
+// 列表：管理员/财务看全部，员工只看自己
 user.get('/', async (c) => {
+  const me = currentUser(c)
+  const { keyword = '' } = c.req.query()
+  let rows
+  if (isAdminOrFinance(me.role)) {
+    let q = db.select().from(users)
+    if (keyword) {
+      const k = `%${keyword}%`
+      q = q.where(or(ilike(users.name, k), ilike(users.phone, k), ilike(users.email, k))) as any
+    }
+    rows = await q.orderBy(desc(users.createdAt))
+  } else {
+    rows = await db.select().from(users).where(eq(users.id, me.sub))
+  }
   return c.json({
     code: 'SUCCESS',
-    data: {
-      list: [
-        {
-          id: '1',
-          name: '张三',
-          email: 'zhangsan@example.com',
-          role: 'admin',
-          department: '技术部',
-          status: 'active',
-          createdAt: '2024-01-15T09:00:00Z',
-        },
-        {
-          id: '2',
-          name: '李四',
-          email: 'lisi@example.com',
-          role: 'finance',
-          department: '财务部',
-          status: 'active',
-          createdAt: '2024-02-01T10:00:00Z',
-        },
-      ],
-      pagination: { page: 1, pageSize: 10, total: 2 },
-    },
+    data: { list: rows.map(toUser), pagination: { page: 1, pageSize: rows.length, total: rows.length } },
   })
 })
 
-user.get('/:id', async (c) => {
-  const { id } = c.req.param()
-  return c.json({
-    code: 'SUCCESS',
-    data: {
-      id,
-      name: id === '1' ? '张三' : '用户',
-      email: 'user@example.com',
-      phone: '138****8888',
-      role: 'user',
-      department: '技术部',
-      position: '高级工程师',
-      employeeNo: 'EMP00' + id,
-    },
-  })
-})
+// 创建用户（管理员/财务）
+user.post(
+  '/',
+  zValidator('json', createUserSchema, (result, c) => {
+    if (!result.success) {
+      return c.json({ code: 'VALIDATION_ERROR', message: '参数验证失败', errors: result.error.flatten() }, 400)
+    }
+  }),
+  async (c) => {
+    const me = currentUser(c)
+    if (!isAdminOrFinance(me.role)) return c.json({ code: 'FORBIDDEN', message: '无权限' }, 403)
+    const data = c.req.valid('json')
+    const email = data.email ? data.email.toLowerCase() : null
+    const conds = [eq(users.phone, data.phone)]
+    if (email) conds.push(eq(users.email, email))
+    const existing = await db.select().from(users).where(or(...conds)).limit(1)
+    if (existing[0]) return c.json({ code: 'CONFLICT', message: '该手机号或邮箱已存在' }, 409)
+
+    let companyRows = await db.select().from(companies).limit(1)
+    let company = companyRows[0]
+    if (!company) {
+      const [cc] = await db.insert(companies).values({ name: '默认公司' }).returning()
+      company = cc
+    }
+    const hash = await bcrypt.hash(data.password || '123456', 10)
+    const [u] = await db
+      .insert(users)
+      .values({
+        companyId: company.id,
+        name: data.name,
+        phone: data.phone,
+        email,
+        passwordHash: hash,
+        role: data.role,
+        department: data.department || null,
+      })
+      .returning()
+    return c.json({ code: 'SUCCESS', data: toUser(u) }, 201)
+  }
+)
 
 export const userRoutes = user
