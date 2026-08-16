@@ -41,6 +41,7 @@ import {
 } from '@/lib/reimbursements'
 import type { ExpenseCategory } from '@/lib/api'
 import { runAudit, type AuditResult, type AuditCheckItem } from '@/lib/audit-engine'
+import { useSubmittedStore } from '@/lib/submitted-store'
 
 const CATEGORY_LABEL: Record<ExpenseCategory, string> = {
   travel: '差旅住宿', transport: '交通出行', meal: '餐饮',
@@ -58,14 +59,27 @@ export default function ReimbursementDetailPage() {
   const [toast, setToast] = useState<{ kind: 'success' | 'error'; text: string } | null>(null)
   const [showDelegate, setShowDelegate] = useState(false)
   const [delegateTo, setDelegateTo] = useState('')
+  const [previewAttachment, setPreviewAttachment] = useState<ReimbursementDetail['attachmentUrls'][number] | null>(null)
   const [isProcessing, setIsProcessing] = useState<null | 'approve' | 'reject' | 'revoke' | 'delegate' | 'pay'>(null)
 
   // 根据路由 id 找对应 mock 数据；找不到就取第一条做 fallback 方便演示
+  const submittedList = useSubmittedStore((s) => s.list)
   const detail = useMemo<ReimbursementDetail>(() => {
     const all = generateMockList(60)
     const found = all.find((r) => r.id === params.id) || all[0]
-    return listItemToDetail(found)
-  }, [params.id])
+    const d = listItemToDetail(found)
+    const submitted = submittedList.find((x) => x.id === params.id)
+    if (submitted && submitted.invoices.length > 0) {
+      return {
+        ...d,
+        title: submitted.title || d.title,
+        code: submitted.code || d.code,
+        invoiceCount: submitted.invoices.length,
+        attachmentUrls: submitted.invoices.map((inv) => ({ name: inv.name, size: inv.size, thumbnail: inv.dataUrl || undefined, url: inv.dataUrl || '#' })),
+      }
+    }
+    return d
+  }, [params.id, submittedList])
 
   const statusMeta = STATUS_META[detail.status]
 
@@ -270,12 +284,16 @@ export default function ReimbursementDetailPage() {
                   className="group relative rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 overflow-hidden hover:border-brand-300 dark:hover:border-brand-700 transition-colors"
                 >
                   <div className="aspect-[4/3] bg-gradient-to-br from-slate-100 to-slate-200 dark:from-slate-800 dark:to-slate-700 flex items-center justify-center relative">
-                    <FileText className="w-8 h-8 text-slate-300 dark:text-slate-500" />
+                    {a.thumbnail ? (
+                      <img src={a.thumbnail} alt={a.name} className="w-full h-full object-cover" />
+                    ) : (
+                      <FileText className="w-8 h-8 text-slate-300 dark:text-slate-500" />
+                    )}
                     <div className="absolute inset-0 bg-black/0 group-hover:bg-black/40 flex items-center justify-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                      <button className="p-2 rounded-lg bg-white/90 text-slate-700">
+                      <button onClick={() => setPreviewAttachment(a)} title="预览" className="p-2 rounded-lg bg-white/90 text-slate-700">
                         <Eye className="w-4 h-4" />
                       </button>
-                      <button className="p-2 rounded-lg bg-white/90 text-slate-700">
+                      <button onClick={() => setPreviewAttachment(a)} title="查看/下载" className="p-2 rounded-lg bg-white/90 text-slate-700">
                         <Download className="w-4 h-4" />
                       </button>
                     </div>
@@ -465,6 +483,10 @@ export default function ReimbursementDetailPage() {
             </select>
           </label>
         </ConfirmModal>
+      )}
+
+      {previewAttachment && (
+        <PreviewModal attachment={previewAttachment} onClose={() => setPreviewAttachment(null)} />
       )}
 
       {/* Toast */}
@@ -763,6 +785,45 @@ function ConfirmModal({
           >
             {confirmLabel}
           </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+
+function PreviewModal({
+  attachment, onClose,
+}: {
+  attachment: { name: string; size: number; thumbnail?: string; url: string }
+  onClose: () => void
+}) {
+  return (
+    <div className="fixed inset-0 z-[70] flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={onClose} />
+      <div className="relative w-full max-w-2xl bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-800 overflow-hidden">
+        <div className="px-5 py-4 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between gap-3">
+          <div className="min-w-0">
+            <h3 className="font-semibold text-slate-900 dark:text-white">原始票据预览</h3>
+            <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400 truncate">{attachment.name} · {attachment.size} KB</p>
+          </div>
+          <button onClick={onClose} className="p-2 rounded-lg text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 flex-shrink-0" title="关闭">
+            <XCircle className="w-5 h-5" />
+          </button>
+        </div>
+        <div className="p-6 flex items-center justify-center bg-slate-50 dark:bg-slate-800/40 min-h-[320px]">
+          {attachment.thumbnail ? (
+            <img src={attachment.thumbnail} alt={attachment.name} className="max-h-[62vh] max-w-full rounded-lg shadow-lg" />
+          ) : (
+            <div className="flex flex-col items-center justify-center text-slate-400 py-12">
+              <FileText className="w-16 h-16 mb-3" />
+              <p className="text-sm font-medium text-slate-500 dark:text-slate-300">{attachment.name}</p>
+              <p className="text-xs mt-1 text-slate-400">演示数据 · 原始票据图片</p>
+            </div>
+          )}
+        </div>
+        <div className="px-5 py-3 border-t border-slate-100 dark:border-slate-800 flex items-center justify-end gap-2">
+          <button onClick={onClose} className="px-4 py-2 text-sm font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg">关闭</button>
         </div>
       </div>
     </div>

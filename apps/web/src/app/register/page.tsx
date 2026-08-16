@@ -21,6 +21,7 @@ import {
   CheckCircle2,
 } from 'lucide-react'
 import { api, formatApiError } from '@/lib/api'
+import { useSettingsStore } from '@/lib/settings'
 
 // --- 表单校验规则 ---
 const registerSchema = z
@@ -107,6 +108,7 @@ export default function RegisterPage() {
         companyName: data.companyName,
       })
       setSuccess(true)
+      useSettingsStore.getState().patchCompany({ fullName: data.companyName })
       setTimeout(() => router.push('/login'), 2000)
     } catch (err) {
       setServerError(formatApiError(err))

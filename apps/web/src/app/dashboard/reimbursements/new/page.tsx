@@ -42,6 +42,14 @@ import {
   CATEGORY_LABEL,
 } from '@/lib/api'
 import { useSettingsStore } from '@/lib/settings'
+import { useSubmittedStore } from '@/lib/submitted-store'
+
+const fileToDataUrl = (f: File): Promise<string> => new Promise((resolve) => {
+  const r = new FileReader()
+  r.onload = () => resolve(String(r.result || ''))
+  r.onerror = () => resolve('')
+  r.readAsDataURL(f)
+})
 import { InvoiceTable } from '@/components/invoice-table'
 import type { AnyInvoice } from '@/components/invoice-table'
 import { InvoiceSummary } from '@/components/invoice-summary'
@@ -547,6 +555,29 @@ export default function NewReimbursementPage() {
     const isSubmit = submitter?.dataset?.action === 'submit'
     try {
       const result = await api.createReimbursement({ ...(values as any), submit: isSubmit })
+      // 打通：把真实发票转 base64 持久化，供审批预览
+      try {
+        const invList = await Promise.all(invoices.map(async (inv) => {
+          const f = uploadedFilesRef.current.get(inv.id)
+          let dataUrl = ''
+          if (typeof inv.thumbnailUrl === 'string' && inv.thumbnailUrl.startsWith('data:')) dataUrl = inv.thumbnailUrl
+          if (!dataUrl && f) dataUrl = await fileToDataUrl(f)
+          return { name: inv.fileName || (f ? f.name : '发票.jpg'), size: f ? Math.round(f.size / 1024) : 0, dataUrl }
+        }))
+        useSubmittedStore.getState().add({
+          id: result.id,
+          code: 'BX-' + result.id,
+          title: values.title || '报销单',
+          type: values.type || 'daily',
+          department: values.department || '',
+          submitter: '申请人',
+          totalAmount: invoices.reduce((sum, x) => sum + (x.amount || 0), 0),
+          status: isSubmit ? 'pending' : 'draft',
+          createdAt: new Date().toISOString(),
+          items: invoices.map((inv) => ({ category: inv.category, amount: inv.amount, description: inv.description, invoiceNo: inv.invoiceNo, date: inv.date })),
+          invoices: invList,
+        })
+      } catch (e) { /* 持久化失败忽略 */ }
       setSubmitSuccess({
         id: result.id,
         status: (result.status as 'draft' | 'pending') || (isSubmit ? 'pending' : 'draft'),
@@ -827,6 +858,21 @@ export default function NewReimbursementPage() {
                             <div className="text-[11px] text-slate-400 truncate font-mono">
                               发票号：{inv.invoiceNo}
                             </div>
+                          )}
+                          {inv.description && (
+                            <div className="text-[11px] text-slate-500 truncate">项目：{inv.description}</div>
+                          )}
+                          {inv.sellerName && (
+                            <div className="text-[11px] text-slate-400 truncate">销方：{inv.sellerName}</div>
+                          )}
+                          {inv.sellerTaxNo && (
+                            <div className="text-[11px] text-slate-400 truncate font-mono">销方税号：{inv.sellerTaxNo}</div>
+                          )}
+                          {inv.buyerName && (
+                            <div className="text-[11px] text-slate-400 truncate">购方：{inv.buyerName}</div>
+                          )}
+                          {inv.buyerTaxNo && (
+                            <div className="text-[11px] text-slate-400 truncate font-mono">购方税号：{inv.buyerTaxNo}</div>
                           )}
                         </>
                       )}

@@ -1,6 +1,7 @@
 'use client'
 
 import { useMemo, useState } from 'react'
+import { useSubmittedStore, submittedToListItem } from '@/lib/submitted-store'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import {
@@ -63,7 +64,11 @@ function StatusBadge({ status }: { status: ReimbursementStatus }) {
 
 export default function ReimbursementListPage() {
   const router = useRouter()
-  const allData = useMemo(() => generateMockList(72), [])
+  const submittedList = useSubmittedStore((s) => s.list)
+  const allData = useMemo(() => {
+    const mock = generateMockList(72)
+    return [...submittedList.map(submittedToListItem), ...mock]
+  }, [submittedList])
 
   const [activeTab, setActiveTab] = useState<typeof STATUS_TABS[number]['key']>('all')
   const [search, setSearch] = useState('')

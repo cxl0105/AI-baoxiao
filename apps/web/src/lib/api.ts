@@ -137,6 +137,12 @@ export interface OcrInvoice {
   description: string
   status: 'pending' | 'processing' | 'success' | 'failed'
   error?: string
+  buyerName?: string
+  buyerTaxNo?: string
+  sellerName?: string
+  sellerTaxNo?: string
+  taxAmount?: number
+  totalAmount?: number
 }
 
 export interface ReimbursementPayload {

@@ -1,66 +1,147 @@
 import { Hono } from 'hono'
 import axios from 'axios'
+import { randomUUID } from 'node:crypto'
+import { writeFile, unlink, mkdir } from 'node:fs/promises'
+import { existsSync } from 'node:fs'
+import { resolve } from 'node:path'
 
 const ocr = new Hono()
 
-// ---- 后端代理使用的 System Prompt（与前端默认保持一致，可通过 OCR_PROXY_SYSTEM_PROMPT 环境变量覆盖） ----
-const DEFAULT_OCR_SYSTEM_PROMPT = `你是专业的发票/小票/行程单识别助手。请按如下要求精确识别图像中的内容：
-1) 输出必须是**合法 JSON**，不要输出任何 Markdown、解释、思考过程、代码块包裹（不要用 \`\`\`json）。
-2) 字段规范：
-{
-  "invoiceNo": "发票号码/编号（如有 INVxxx 优先取；否则取发票号码字段；找不到就返回空字符串）",
-  "date": "YYYY-MM-DD 格式的开票日期（2024-05-22；仅年月日），找不到就返回空字符串",
-  "amount": 0.0,
-  "taxAmount": 0.0,
-  "totalAmount": 0.0,
-  "category": "分类：travel(差旅住宿)/meal(餐饮)/transport(交通出行，含高铁/地铁/出租/滴滴/机票)/office(办公用品采购)/communication(话费/宽带/通讯账单)/entertainment(客户招待/礼品/KTV等)/training(培训/会议/参展)/other（无法分类或其他）",
-  "description": "简短中文描述：包含『类别』+ 商家/地点/事由，如『餐饮发票（海底捞望京店）』、『交通出行发票（滴滴出行望京-国贸）』；长度不超过 40 字",
-  "buyerName": "购买方名称（通常在「购买方/付款方/购买人」后的公司名或个人名）或空字符串",
-  "buyerTaxNo": "购买方纳税人识别号/统一社会信用代码（18 位左右）或空字符串",
-  "sellerName": "销售方/开票方名称或空字符串",
-  "sellerTaxNo": "销售方纳税人识别号或空字符串",
-  "rawText": "可选：把你识别到的主要文字，按行用 \\n 拼起来（500 字以内），便于用户核对"
-}
-3) 金额字段：
-   - totalAmount：**价税合计 / 应付金额 / 实付金额 / 总金额**，用户最关心；如果图上有「价税合计(小写) ¥1,886.00」就取 1886.00；有「¥128 元」就取 128.00。
-   - amount：**金额/不含税金额/价款合计**；能识别就填，无法识别就写 null 或同 totalAmount。
-   - taxAmount：税额，能识别就填，否则 0 或 null。
-4) 分类 category 尽量按语义选最合适的一类：
-   - 餐饮 / 饭店 / 火锅 / 咖啡 / 星巴克 / 海底捞 → meal
-   - 酒店 / 住宿 / 房费 / 7 天 / 如家 / 汉庭 / 希尔顿 → travel
-   - 高铁 / 火车票 / 机票 / 地铁 / 公交 / 出租 / 滴滴 / 加油 / 停车费 / 高速 / ETC → transport
-   - 办公 / 文具 / 耗材 / 打印 / 采购 / 电脑 / 显示器 → office
-   - 话费 / 手机费 / 流量 / 电信 / 移动 / 联通 / 宽带 → communication
-   - 培训 / 会议 / 峰会 / 论坛 / 展会 / 课程 / 报名费 → training
-   - 客户招待 / 宴请 / 礼品 / KTV / 高尔夫 / 球票 → entertainment
-5) 日期只取**开票日期/行程日期/消费日期**。若有多条，取「业务发生日期」而非打印日期。找不到返回空字符串。
-6) 所有数值字段：用 number（128.00 不是字符串）；金额以元为单位，支持 2 位小数。
-7) 若图像里**完全没有发票或任何金额/日期信息**，也照样返回合法 JSON（totalAmount=0、category=other、description=其他费用发票，其他字段尽量空）。`
-
-// ---- 简化的响应契约（与前端 NormalizedOcrResult 对齐，避免跨 app 导入） ----
-interface VisionLlmInvoiceResult {
-  invoiceNo?: string
-  date?: string
-  amount?: number
-  taxAmount?: number
-  totalAmount?: number
-  category?: string
-  description?: string
-  buyerName?: string
-  buyerTaxNo?: string
-  sellerName?: string
-  sellerTaxNo?: string
-  rawText?: string
+function getCfg() {
+  return {
+    url: (process.env.MEDIAKIT_OCR_URL || '').trim() || 'https://mediakit.cn-beijing.volces.com/api/v1/tools-sync/image-ocr',
+    key: (process.env.MEDIAKIT_API_KEY || '').trim(),
+    publicBase: (process.env.PUBLIC_BASE_URL || 'http://aibaoxiao.top').trim().replace(/\/+$/, ''),
+    uploadDir: (process.env.UPLOAD_DIR || '/var/www/uploads').trim(),
+  }
 }
 
-interface BackendProxyOcrResult {
+const CATEGORY_KEYWORDS: Array<{ cat: string; keywords: string[] }> = [
+  { cat: 'travel', keywords: ['住宿', '酒店', 'hotel', '旅馆', '宾馆', '民宿', '客栈', '房费', '住宿费'] },
+  { cat: 'transport', keywords: ['交通', '出租', '的士', '滴滴', '打车', 'taxi', '地铁', '公交', '出行', '加油', '停车', '过路费', '高速', 'ETC', '网约车', '高铁', '动车', '火车', '铁路', '机票', '航空', '航班', 'flight', 'airline', '汽车票', '船票', '单车', 'uber', 'didi'] },
+  { cat: 'meal', keywords: ['餐饮', '餐费', '餐', '饭', '美食', 'restaurant', '食堂', '外卖', '餐厅', '饭店', '烧烤', '火锅', '咖啡', '奶茶', '饮品', '甜品', '早餐', '午餐', '晚餐', '海底捞', '星巴克', '肯德基', '麦当劳', 'kfc', 'mcdonald', '瑞幸', 'luckin'] },
+  { cat: 'office', keywords: ['办公', '文具', '耗材', '打印', '复印', 'office', '采购', '键盘', '鼠标', '电脑', '显示器', '打印纸', '笔记本', '记事本', '签字笔', '墨水', '硒鼓', '文件夹', '订书机', '便利贴', '墨盒'] },
+  { cat: 'communication', keywords: ['通讯', '话费', '电话', '手机费', '流量', '电信', '移动', '联通', '宽带', '套餐', '5G', '4G', 'SIM', '充值', '账单', '固话'] },
+  { cat: 'entertainment', keywords: ['招待', '宴请', '接待', '客户', '礼品', '送礼', '茶歇', 'KTV', '会务', '会所', '洗浴', '足疗', '高尔夫', '球票', '电影票', '观影', '门票', '演出', '纪念品', '伴手礼'] },
+  { cat: 'training', keywords: ['培训', '讲座', '课程', '研修', '训练营', 'workshop', '会议', '峰会', '论坛', '展会', '参展', 'seminar', 'conference', '学费', '讲师', '教练', '认证', '考试', '报名费'] },
+]
+
+const DESC_MAP: Record<string, string> = {
+  travel: '差旅住宿发票', meal: '餐饮发票', transport: '交通出行发票',
+  office: '办公用品采购发票', communication: '通讯发票',
+  entertainment: '客户招待发票', training: '培训/会议报销发票', other: '其他费用发票',
+}
+
+function extractAllAmounts(text: string): number[] {
+  if (!text) return []
+  const re = /(?:￥|¥|RMB|CNY|\$|美金|美元|欧元|港币)?\s*([\d]{1,3}(?:,\d{3})+\.?\d{0,2}|\d+\.\d{1,2}|\d+)(?=\s*(?:元|圆|RMB|CNY)|\b)/g
+  const hasDateHint = /(20\d{2})[-_./年]/.test(text) || /\d{1,2}[月\-_./]\d{1,2}/.test(text) || text.includes('季度')
+  const out: number[] = []
+  let m: RegExpExecArray | null
+  while ((m = re.exec(text)) != null) {
+    const raw = m[1]
+    const num = parseFloat(raw.replace(/,/g, ''))
+    if (!isFinite(num) || num <= 0 || num >= 1e8) continue
+    if (hasDateHint && /^\d+$/.test(raw) && num >= 1970 && num <= 2099) continue
+    out.push(+num.toFixed(2))
+  }
+  return out
+}
+
+function parseAmount(text: string): number | null {
+  if (!text) return null
+  const strongPatterns = [
+    /价税合计[^\d]{0,12}?([\d,]+\.?\d{0,2})/,
+    /(?:￥|¥|RMB|CNY)\s*([\d,]+\.?\d{0,2})/i,
+    /(?:合计金额|总金额|应付金额|实付|支付金额|订单金额|结算金额|含税金额|总计|小写|合计|房价|总价)[：:\s]*([\d,]+\.?\d{0,2})/i,
+    /(?:金额|含税|税价|小计|单项金额|实付金额)[：:\s]*([\d,]+\.?\d{0,2})/i,
+    /([\d,]+\.\d{1,2})\s*(?:元|圆|RMB|CNY)/i,
+  ]
+  for (const re of strongPatterns) {
+    const m = text.match(re)
+    if (m) {
+      const raw = m[1]
+      const num = parseFloat(raw.replace(/,/g, ''))
+      if (isFinite(num) && num > 0 && num < 1e8) {
+        const hasDateHint = /(20\d{2})[-_./年]/.test(text) || /\d{1,2}[月\-_./]\d{1,2}/.test(text)
+        if (hasDateHint && /^\d+$/.test(raw) && num >= 1970 && num <= 2099) continue
+        return +num.toFixed(2)
+      }
+    }
+  }
+  const candidates = extractAllAmounts(text)
+  if (candidates.length) {
+    candidates.sort((a, b) => b - a)
+    const plausible = candidates.filter((x) => x >= 0.5)
+    if (plausible.length) return plausible[0]
+    return candidates[0]
+  }
+  return null
+}
+
+function parseDate(text: string): string {
+  if (!text) return ''
+  let m = text.match(/(20\d{2})[-_./年](\d{1,2})[-_./月](\d{1,2})/)
+  if (m) {
+    const mo = +m[2], da = +m[3]
+    if (mo >= 1 && mo <= 12 && da >= 1 && da <= 31) return `${m[1]}-${String(mo).padStart(2, '0')}-${String(da).padStart(2, '0')}`
+  }
+  m = text.match(/(?:^|[^\d])(20\d{2})(\d{2})(\d{2})(?:$|[^\d])/)
+  if (m) {
+    const mo = +m[2], da = +m[3]
+    if (mo >= 1 && mo <= 12 && da >= 1 && da <= 31) return `${m[1]}-${m[2]}-${m[3]}`
+  }
+  m = text.match(/(20\d{2})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*日?/)
+  if (m) {
+    const mo = +m[2], da = +m[3]
+    if (mo >= 1 && mo <= 12 && da >= 1 && da <= 31) return `${m[1]}-${String(mo).padStart(2, '0')}-${String(da).padStart(2, '0')}`
+  }
+  return ''
+}
+
+function parseInvoiceNo(text: string): string {
+  if (!text) return ''
+  const candidates = [
+    /发票(?:号码|代码|编号|号)[：:\s]*([A-Za-z0-9-]{6,32})/,
+    /(?:No\.?|Number|№|#|票据号)\s*([A-Za-z0-9-]{6,32})/i,
+    /((?:INV|FP|INVOICE)[A-Z]*[-\s]*[\dA-Z-]{6,24})/i,
+    /\b(\d{8,24})\b/,
+  ]
+  for (const re of candidates) {
+    const m = text.match(re)
+    if (m) return m[1].toUpperCase().replace(/\s/g, '')
+  }
+  return ''
+}
+
+// 从文本中提取「标签：值」字段
+function extractField(text: string, label: string): string {
+  const m = text.match(new RegExp(label + '[：:]\\s*([^\\n，,]{2,80})'))
+  return m ? m[1].trim() : ''
+}
+
+function parseCategory(text: string): { category: string; description: string } {
+  const hay = (text || '').toLowerCase()
+  const sorted = [...CATEGORY_KEYWORDS].sort(
+    (a, b) => b.keywords.reduce((s, k) => s + k.length, 0) - a.keywords.reduce((s, k) => s + k.length, 0)
+  )
+  let category = 'other'
+  outer: for (const { cat, keywords } of sorted) {
+    for (const kw of keywords) {
+      if (hay.includes(kw.toLowerCase())) { category = cat; break outer }
+    }
+  }
+  return { category, description: DESC_MAP[category] || '其他费用发票' }
+}
+
+interface NormalizedOcrResult {
   invoiceNo: string
   date: string
-  category: string
-  description: string
   amount: number
   taxAmount: number
   totalAmount: number
+  category: string
+  description: string
   buyerName?: string
   buyerTaxNo?: string
   sellerName?: string
@@ -71,248 +152,112 @@ interface BackendProxyOcrResult {
   fileName?: string
 }
 
-// ---- JSON 兜底提取（兼容模型用 ```json 包裹或输出解释文字） ----
-function extractJson<T = unknown>(text: string): T | null {
-  if (!text) return null
-  const s = text.trim()
-  try { return JSON.parse(s) as T } catch { /* ignore */ }
-  const m = s.match(/```(?:json)?\s*([\s\S]*?)```/i)
-  if (m) {
-    try { return JSON.parse(m[1].trim()) as T } catch { /* ignore */ }
-  }
-  const left = s.indexOf('{')
-  const right = s.lastIndexOf('}')
-  if (left >= 0 && right > left) {
-    try { return JSON.parse(s.slice(left, right + 1)) as T } catch { /* ignore */ }
-  }
-  return null
-}
-
-function to2(n: number | null | undefined): number {
-  if (typeof n !== 'number' || !Number.isFinite(n)) return 0
-  return +n.toFixed(2)
-}
-
-// ---- 智能兜底：当 LLM 某些字段缺失时用文件名做轻量推断 ----
-const CATEGORY_FALLBACK_MAP: Array<{ cat: string; re: RegExp }> = [
-  { cat: 'meal', re: /餐饮|餐费|饭店|火锅|咖啡|星巴克|瑞幸|luckin|海底捞|肯德基|kfc|麦当劳|mcdonald/i },
-  { cat: 'travel', re: /住宿|酒店|hotel|机票|航空|飞机|高铁|动车|火车|差旅|宾馆|民宿|房费/i },
-  { cat: 'transport', re: /出租|的士|滴滴|didi|打车|taxi|地铁|公交|加油|停车|过路费|高速|etc|网约车|单车|机票|火车票|汽车票/i },
-  { cat: 'office', re: /办公|文具|耗材|打印|复印|采购|office|电脑|显示器|键盘|鼠标/i },
-  { cat: 'communication', re: /通讯|话费|电话|手机费|流量|电信|移动|联通|宽带/i },
-  { cat: 'entertainment', re: /招待|宴请|接待|客户|礼品|ktv|会务|高尔夫|球票/i },
-  { cat: 'training', re: /培训|讲座|课程|研修|会议|峰会|论坛|展会|参展|报名费|seminar|conference|workshop/i },
-]
-
-const DESC_MAP: Record<string, string> = {
-  travel: '差旅住宿发票',
-  meal: '餐饮发票',
-  transport: '交通出行发票',
-  office: '办公用品采购发票',
-  communication: '通讯发票',
-  entertainment: '客户招待发票',
-  training: '培训/会议报销发票',
-  other: '其他费用发票',
-}
-
-function fallbackCategory(original: string | undefined, fileName: string): { category: string; description: string } {
-  if (original && ['travel', 'meal', 'office', 'communication', 'transport', 'entertainment', 'training', 'other'].includes(original)) {
-    return { category: original, description: DESC_MAP[original] || '其他费用发票' }
-  }
-  const hay = fileName || ''
-  for (const entry of CATEGORY_FALLBACK_MAP) {
-    if (entry.re.test(hay)) {
-      return { category: entry.cat, description: DESC_MAP[entry.cat] }
-    }
-  }
-  return { category: 'other', description: DESC_MAP.other }
-}
-
-function fallbackAmount(raw: VisionLlmInvoiceResult): { amount: number; totalAmount: number; taxAmount: number } {
-  const total = typeof raw.totalAmount === 'number' && isFinite(raw.totalAmount) ? raw.totalAmount : 0
-  const amt = typeof raw.amount === 'number' && isFinite(raw.amount) ? raw.amount : 0
-  const tax = typeof raw.taxAmount === 'number' && isFinite(raw.taxAmount) ? raw.taxAmount : 0
-  if (total > 0) return { amount: to2(amt || total), totalAmount: to2(total), taxAmount: to2(tax) }
-  if (amt > 0) return { amount: to2(amt), totalAmount: to2(amt), taxAmount: to2(tax) }
-  return { amount: 0, totalAmount: 0, taxAmount: 0 }
-}
-
-function fallbackDate(original: string | undefined, fileName: string): string {
-  if (original && /^\d{4}-\d{2}-\d{2}$/.test(original)) return original
-  // 从文件名提取 2024-06-15 / 2024_06_15 / 20240615 / 6月15日
-  let m = (fileName || '').match(/(20\d{2})[-_./年](\d{1,2})[-_./月](\d{1,2})/)
-  if (m) {
-    const mo = +m[2], da = +m[3]
-    if (mo >= 1 && mo <= 12 && da >= 1 && da <= 31) {
-      return `${m[1]}-${String(mo).padStart(2, '0')}-${String(da).padStart(2, '0')}`
-    }
-  }
-  m = (fileName || '').match(/(20\d{2})(\d{2})(\d{2})/)
-  if (m) {
-    const mo = +m[2], da = +m[3]
-    if (mo >= 1 && mo <= 12 && da >= 1 && da <= 31) return `${m[1]}-${m[2]}-${m[3]}`
-  }
-  return new Date().toISOString().slice(0, 10)
-}
-
-function fallbackInvoiceNo(original: string | undefined, date: string, fileName: string): string {
-  if (original && original.length >= 4) return original
-  const hash = Math.abs(
-    (fileName + date).split('').reduce((a, c) => a * 131 + c.charCodeAt(0), 0)
-  )
-  return 'INV' + date.replace(/-/g, '') + String(1000 + (hash % 8999))
-}
-
-// ---- OCR 配置健康检查：告知前端「后端代理是否已配置」 ----
 ocr.get('/proxy-config', (c) => {
-  const baseUrl = process.env.OCR_PROXY_BASE_URL || ''
-  const apiKey = process.env.OCR_PROXY_API_KEY || ''
-  const model = process.env.OCR_PROXY_MODEL || ''
-  const enabled = !!baseUrl && !!apiKey && !!model
+  const { key } = getCfg()
+  const enabled = !!key
   return c.json({
     code: 'SUCCESS',
     data: {
       enabled,
-      provider: 'vision_llm',
-      baseUrlConfigured: !!baseUrl,
-      apiKeyConfigured: !!apiKey,
-      modelConfigured: !!model,
-      model: enabled ? model : undefined,
+      provider: 'mediakit_ocr',
+      baseUrlConfigured: true,
+      apiKeyConfigured: enabled,
+      modelConfigured: enabled,
+      model: 'mediakit-image-ocr',
       callMode: 'backend_proxy',
-      hint: enabled
-        ? '后端 OCR 代理已就绪，前端保存即可使用，无需在浏览器端填写 API Key。'
-        : '后端 OCR 代理尚未配置。请在服务器设置环境变量：OCR_PROXY_BASE_URL / OCR_PROXY_API_KEY / OCR_PROXY_MODEL。',
+      hint: enabled ? '后端 MediaKit OCR 已就绪，前端保存即可使用。' : '后端 MediaKit OCR 尚未配置。请在服务器设置环境变量 MEDIAKIT_API_KEY。',
     },
   })
 })
 
-// ---- POST /api/v1/ocr/recognize —— 前端只传文件，Key 只存在服务器 ----
 ocr.post('/recognize', async (c) => {
   const startedAt = Date.now()
+  const { url, key, publicBase, uploadDir } = getCfg()
 
-  // 1) 读取后端配置（服务端 .env，不暴露给前端）
-  const baseUrl = (process.env.OCR_PROXY_BASE_URL || '').trim()
-  const apiKey = (process.env.OCR_PROXY_API_KEY || '').trim()
-  const model = (process.env.OCR_PROXY_MODEL || '').trim()
-  const timeoutMs = Number(process.env.OCR_PROXY_TIMEOUT_MS) || 60_000
-  const temperature = Number(process.env.OCR_PROXY_TEMPERATURE) || 0.1
-  const sysPrompt = (process.env.OCR_PROXY_SYSTEM_PROMPT || '').trim() || DEFAULT_OCR_SYSTEM_PROMPT
-
-  if (!baseUrl || !apiKey || !model) {
-    return c.json(
-      {
-        code: 'PROXY_NOT_CONFIGURED',
-        message: '服务器未配置 OCR 代理（缺少 OCR_PROXY_BASE_URL / OCR_PROXY_API_KEY / OCR_PROXY_MODEL 环境变量）。请联系管理员，或在系统设置中切换到「前端直连」模式。',
-      },
-      503
-    )
+  if (!key) {
+    return c.json({ code: 'PROXY_NOT_CONFIGURED', message: '服务器未配置 MediaKit OCR（缺少 MEDIAKIT_API_KEY）。' }, 503)
   }
 
-  // 2) 解析上传的文件
   let file: File | undefined
   let fileName = 'upload'
   try {
     const formData = await c.req.formData()
     const entry = formData.get('file')
     if (!entry || typeof (entry as any).arrayBuffer !== 'function') {
-      return c.json(
-        { code: 'VALIDATION_ERROR', message: '缺少文件字段 `file`（multipart/form-data 上传）。' },
-        400
-      )
+      return c.json({ code: 'VALIDATION_ERROR', message: '缺少文件字段 file（multipart/form-data 上传）。' }, 400)
     }
     file = entry as File
     fileName = file.name || fileName
     if (!file.type.startsWith('image/') && !file.type.includes('pdf')) {
-      return c.json(
-        { code: 'UNSUPPORTED_FILE_TYPE', message: `不支持的文件类型：${file.type}。请上传图片或 PDF。` },
-        400
-      )
+      return c.json({ code: 'UNSUPPORTED_FILE_TYPE', message: `不支持的文件类型：${file.type}。请上传图片或 PDF。` }, 400)
     }
   } catch (err: any) {
-    return c.json(
-      { code: 'BAD_REQUEST', message: '解析上传文件失败：' + (err?.message || String(err)) },
-      400
-    )
+    return c.json({ code: 'BAD_REQUEST', message: '解析上传文件失败：' + (err?.message || String(err)) }, 400)
   }
 
-  // 3) 文件 → base64 data URL
-  const buf = Buffer.from(await file.arrayBuffer())
-  const mediaType = file.type || 'application/octet-stream'
-  const dataUrl = `data:${mediaType};base64,${buf.toString('base64')}`
+  const ext = (file.name || '').split('.').pop()?.replace(/[^a-zA-Z0-9]/g, '') || 'png'
+  const savedName = `${randomUUID()}.${ext}`
+  const savedPath = resolve(uploadDir, savedName)
+  const imageUrl = `${publicBase}/uploads/${savedName}`
 
-  // 4) 调视觉大模型（OpenAI 兼容 /chat/completions）
-  const endpoint = `${baseUrl.replace(/\/$/, '')}/chat/completions`
   try {
-    const resp = await axios.post(
-      endpoint,
-      {
-        model,
-        temperature,
-        max_tokens: 2400,
-        response_format: { type: 'json_object' },
-        messages: [
-          { role: 'system', content: sysPrompt },
-          {
-            role: 'user',
-            content: [
-              { type: 'image_url', image_url: { url: dataUrl, detail: 'high' } },
-              {
-                type: 'text',
-                text: `请识别这张${file.type.includes('pdf') ? '（可能是 PDF 图片转换）' : ''}发票。文件名：${fileName}。请严格按 System Prompt 里的 JSON 结构返回。`,
-              },
-            ],
-          },
-        ],
-      },
-      {
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${apiKey}`,
-        },
-        timeout: timeoutMs,
-      }
-    )
+    if (!existsSync(uploadDir)) await mkdir(uploadDir, { recursive: true })
+    const buf = Buffer.from(await file.arrayBuffer())
+    await writeFile(savedPath, buf)
 
-    const content: string | undefined = resp?.data?.choices?.[0]?.message?.content
-    if (!content) {
-      return c.json(
-        {
-          code: 'LLM_EMPTY_RESPONSE',
-          message: `视觉大模型返回空内容 (HTTP ${resp.status})。请检查模型名称是否支持视觉输入。`,
-        },
-        502
-      )
+    const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` }
+
+    // 标准版 OCR（快），一次性拿到全文
+    const resp = await axios.post(url, { image_url: imageUrl, tool_version: 'standard' }, { headers, timeout: 40000 })
+    if (!resp?.data?.success) {
+      const emsg = resp?.data?.error?.message || 'OCR 调用失败'
+      return c.json({ code: 'LLM_CALL_FAILED', message: `MediaKit OCR 失败：${emsg}` }, 502)
     }
+    const blocks: Array<{ content?: string }> = resp.data.result?.ocr_result || []
+    const rawText = blocks.map((b) => b.content || '').join('\n').trim()
 
-    const parsed = extractJson<VisionLlmInvoiceResult>(content) || {}
+    // 解析金额 / 日期 / 发票号 / 类别
+    const totalAmount = parseAmount(rawText) || 0
+    const date = parseDate(rawText)
+    const invoiceNo = parseInvoiceNo(rawText)
+    const { category, description: catDesc } = parseCategory(rawText)
 
-    // 5) 规范化 & 兜底（与前端 normalizeOcrResult 保持一致的输出字段）
-    const catFallback = fallbackCategory(parsed.category, fileName)
-    const category = parsed.category && catFallback.category === parsed.category
-      ? parsed.category
-      : catFallback.category
-    let description = parsed.description?.trim()
-    if (!description) description = catFallback.description
-    if (!/[\u4e00-\u9fa5]/.test(description)) description = catFallback.description
+    // 税额：单独匹配
+    const taxM = rawText.match(/税额[：:\s]*([\d,]+\.?\d{0,2})/)
+    const taxAmount = taxM ? parseFloat(taxM[1].replace(/,/g, '')) || 0 : 0
+    const amount = totalAmount > 0 ? Math.max(0, +(totalAmount - taxAmount).toFixed(2)) : 0
 
-    const amounts = fallbackAmount(parsed)
-    const date = fallbackDate(parsed.date, fileName)
-    const invoiceNo = fallbackInvoiceNo(parsed.invoiceNo, date, fileName)
+    // 购买方 / 销售方 / 税号 / 项目名称
+    let buyerName = extractField(rawText, '购买方名称') || extractField(rawText, '购方名称')
+    if (!buyerName) {
+      const bm = rawText.match(/购买[^\n：:]{0,2}名称[：:]\s*([^\n，,]{2,80})/)
+      if (bm) buyerName = bm[1].trim()
+    }
+    let sellerName = extractField(rawText, '销售方名称') || extractField(rawText, '销方名称')
+    if (!sellerName) {
+      const sm = rawText.match(/销售[^\n：:]{0,2}名称[：:]\s*([^\n，,]{2,80})/)
+      if (sm) sellerName = sm[1].trim()
+    }
+    const buyerTaxNo = extractField(rawText, '购买方纳税人识别号') || extractField(rawText, '购方纳税人识别号') || extractField(rawText, '统一社会信用代码')
+    const sellerTaxNo = extractField(rawText, '销售方纳税人识别号') || extractField(rawText, '销方纳税人识别号')
+    // 项目名称：优先 *xxx* 形式，其次「项目名称：xxx」
+    const starM = rawText.match(/\*[^*\n]{1,60}\*/)
+    const projectName = starM ? starM[0].replace(/\*/g, '') : (extractField(rawText, '项目名称') || extractField(rawText, '货物或应税劳务、服务名称'))
 
-    const result: BackendProxyOcrResult = {
+    const result: NormalizedOcrResult = {
       invoiceNo,
       date,
+      amount,
+      taxAmount,
+      totalAmount,
       category,
-      description,
-      amount: amounts.amount,
-      taxAmount: amounts.taxAmount,
-      totalAmount: amounts.totalAmount > 0 ? amounts.totalAmount : amounts.amount,
-      buyerName: parsed.buyerName || undefined,
-      buyerTaxNo: parsed.buyerTaxNo || undefined,
-      sellerName: parsed.sellerName || undefined,
-      sellerTaxNo: parsed.sellerTaxNo || undefined,
-      rawText: parsed.rawText || undefined,
-      provider: 'vision_llm (backend_proxy)',
+      description: projectName ? projectName.replace(/\*/g, '') : catDesc,
+      buyerName,
+      buyerTaxNo,
+      sellerName,
+      sellerTaxNo,
+      rawText: rawText.slice(0, 1200),
+      provider: 'mediakit_ocr',
       latencyMs: Date.now() - startedAt,
       fileName,
     }
@@ -320,28 +265,10 @@ ocr.post('/recognize', async (c) => {
     return c.json({ code: 'SUCCESS', data: result })
   } catch (err: any) {
     const status = err?.response?.status || 502
-    const upstreamMsg: string =
-      err?.response?.data?.error?.message ||
-      err?.response?.data?.message ||
-      err?.message ||
-      '未知错误'
-    return c.json(
-      {
-        code: 'LLM_CALL_FAILED',
-        message: `调用视觉大模型失败 (${status}): ${upstreamMsg}`,
-        details:
-          process.env.NODE_ENV === 'production'
-            ? undefined
-            : {
-                baseUrl,
-                model,
-                upstreamStatus: status,
-                upstreamMsg,
-                latencyMs: Date.now() - startedAt,
-              },
-      },
-      status >= 400 && status < 600 ? status : 502
-    )
+    const upstreamMsg = err?.response?.data?.error?.message || err?.message || '未知错误'
+    return c.json({ code: 'LLM_CALL_FAILED', message: `MediaKit OCR 调用失败 (${status}): ${upstreamMsg}` }, status >= 400 && status < 600 ? status : 502)
+  } finally {
+    try { await unlink(savedPath) } catch { /* ignore */ }
   }
 })
 

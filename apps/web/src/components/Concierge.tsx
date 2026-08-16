@@ -65,7 +65,7 @@ export default function Concierge({ context }: ConciergeProps) {
         {
           id: uid(),
           role: 'assistant',
-          content: `你好！我是 Concierge 智能助手 ✨\n\n我可以帮你解答报销问题、推荐费用类别、提供填写建议。\n\n试试问我「如何提交报销单」或点击下方的快捷问题吧！`,
+          content: `你好！我是 细妹子智能助手 ✨\n\n我可以帮你解答报销问题、推荐费用类别、提供填写建议。\n\n试试问我「如何提交报销单」或点击下方的快捷问题吧！`,
           timestamp: new Date().toISOString(),
         },
       ])
@@ -150,7 +150,7 @@ export default function Concierge({ context }: ConciergeProps) {
           )}
           {/* 首次提示 */}
           <span className="absolute right-full mr-3 top-1/2 -translate-y-1/2 whitespace-nowrap rounded-lg bg-slate-900 dark:bg-slate-700 text-white text-xs px-3 py-1.5 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
-            智能助手 · 有 {suggestions.length} 条建议
+            细妹子 · 有 {suggestions.length} 条建议
           </span>
         </button>
       )}
@@ -165,7 +165,7 @@ export default function Concierge({ context }: ConciergeProps) {
                 <Bot className="w-5 h-5" />
               </div>
               <div>
-                <h3 className="font-semibold text-sm">Concierge 智能助手</h3>
+                <h3 className="font-semibold text-sm">细妹子智能助手</h3>
                 <p className="text-xs text-white/70">在线 · 随时为你解答</p>
               </div>
             </div>

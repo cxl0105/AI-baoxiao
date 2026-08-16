@@ -1200,7 +1200,7 @@ function CompanyTab({ form, setForm }: { form: CompanyInfo; setForm: React.Dispa
               </div>
               <div className="min-w-0">
                 <div className="font-bold text-slate-900 dark:text-white truncate">
-                  {form.shortName || '智报销演示公司'}
+                  {form.fullName || form.shortName || '未设置'}
                 </div>
                 <div className="text-[11px] text-slate-500 dark:text-slate-400 truncate">
                   {form.industry || '互联网/信息技术'} · {SCALE_OPTIONS.find((s) => s.value === form.scale)?.label || '51-200 人'}

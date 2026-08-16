@@ -61,6 +61,7 @@ import {
   inferLevelFromRole,
 } from '@/lib/expense-standard'
 import { useConciergeStore } from '@/lib/concierge'
+import { useInvoiceStore } from '@/lib/invoice-store'
 
 /* ======================================================================
    类型定义
@@ -265,6 +266,35 @@ export default function SpreadsheetReimbursementPage() {
   const updateRow = (id: string, patch: Partial<ExpenseRow>) =>
     setRows((rs) => rs.map((r) => (r.id === id ? { ...r, ...patch, amounts: patch.amounts ? { ...r.amounts, ...patch.amounts } : r.amounts } : r)))
   const removeRow = (id: string) => setRows((rs) => (rs.length > 1 ? rs.filter((r) => r.id !== id) : rs))
+
+  // 智能补填：把发票池里「未使用」的发票按智能分类填入明细表
+  const autoFillFromInvoices = () => {
+    const invoices = useInvoiceStore.getState().invoices.filter((inv) => inv.status === 'unused')
+    if (invoices.length === 0) {
+      if (typeof window !== 'undefined') window.alert('发票池中没有可导入的「未使用」发票。请先在「智能新建（发票识别）」里上传并识别发票。')
+      return
+    }
+    const rowsToAdd = invoices.map((inv) => {
+      const text = ((inv.description || '') + ' ' + (inv.sellerName || '') + ' ' + (inv.type || '')).toLowerCase()
+      let cat: ExpenseCategoryKey = 'other'
+      if (/(酒店|住宿|宾馆|民宿|房费|hotel)/.test(text)) cat = 'hotel'
+      else if (/(打车|出租|滴滴|网约车|taxi|uber)/.test(text)) cat = 'taxi'
+      else if (/(餐饮|餐费|饭店|火锅|咖啡|食品|外卖|餐厅|早餐|午餐|晚餐)/.test(text)) cat = 'meal'
+      else if (/(交通|机票|火车|高铁|动车|地铁|公交|加油|停车|航空|flight|铁路|过路)/.test(text)) cat = 'transport'
+      return {
+        id: uid(),
+        date: inv.date || todayISO(),
+        note: [inv.sellerName, inv.description].filter(Boolean).join(' ') || inv.invoiceNumber,
+        amounts: { [cat]: inv.amount } as Partial<Record<ExpenseCategoryKey, number>>,
+        invoiceCount: 1,
+      }
+    })
+    setRows((cur) => {
+      // 保留已有内容的行，去掉纯空行，追加导入行
+      const nonEmpty = cur.filter((r) => enabledCategories.some((c) => n(r.amounts[c.key as ExpenseCategoryKey]) > 0) || r.note.trim())
+      return [...nonEmpty, ...rowsToAdd]
+    })
+  }
   const addRowAfter = (id?: string) => {
     const nr = buildEmptyRow()
     setRows((rs) => {
@@ -512,7 +542,7 @@ export default function SpreadsheetReimbursementPage() {
   }
 
   // ===== 样式常量（打印友好 A4）=====
-  const TH_CL = 'px-2 py-2 text-left text-[12px] font-semibold text-slate-700 dark:text-slate-200 bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 align-top whitespace-nowrap'
+  const TH_CL = 'px-2 py-2 text-left text-[12px] font-semibold text-slate-700 dark:text-slate-200 bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 align-top whitespace-normal break-words'
   const TD_CL = 'px-2 py-1 border border-slate-200 dark:border-slate-700 align-top'
   const CELL_INPUT = 'w-full px-1.5 py-1.5 text-sm bg-transparent outline-none focus:bg-brand-50/60 dark:focus:bg-brand-950/30 rounded text-slate-800 dark:text-slate-100 tabular-nums'
   const CELL_INPUT_NUM = `${CELL_INPUT} text-right font-medium`
@@ -589,13 +619,13 @@ export default function SpreadsheetReimbursementPage() {
       {/* ============ 单据本体（A4 打印样式） ============ */}
       <div className="bg-white dark:bg-slate-900 shadow-xl rounded-2xl border border-slate-200 dark:border-slate-800 overflow-hidden print:shadow-none print:rounded-none print:border-slate-400/60">
         {/* A4 内边距 */}
-        <div className="p-8 sm:p-12 max-w-[980px] mx-auto print:max-w-none print:p-10">
+        <div className="p-8 sm:p-12 max-w-[1280px] mx-auto print:max-w-none print:p-10">
           {/* 单据抬头 + 公司信息 + 编号 */}
           <div className="border-b-2 border-slate-800 dark:border-slate-100 pb-5 mb-6 flex items-start justify-between gap-6 flex-wrap print:border-slate-900">
             <div className="min-w-0">
-              {(company?.shortName || company?.fullName) && (
+              {(company?.fullName || company?.shortName) && (
                 <div className="text-xs tracking-[0.18em] uppercase text-slate-500 dark:text-slate-400 mb-1">
-                  {(company?.shortName || company?.fullName) + ' · ' + (policy?.formTitle || '出差费用报销单')}
+                  {(company?.fullName || company?.shortName) + ' · ' + (policy?.formTitle || '出差费用报销单')}
                 </div>
               )}
               <h2 className="text-3xl sm:text-[32px] font-black tracking-tight text-slate-900 dark:text-white">
@@ -692,15 +722,20 @@ export default function SpreadsheetReimbursementPage() {
                 <span className="w-1.5 h-4 rounded bg-brand-600" />
                 A · 费用明细表（按日期填写）
               </h3>
-              <div className="text-[11px] text-slate-500 dark:text-slate-400">
+              <div className="flex items-center gap-3 flex-wrap">
+              <button onClick={autoFillFromInvoices} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-white bg-brand-600 hover:bg-brand-700 shadow shadow-brand-600/20">
+                <ClipboardCheck className="w-3.5 h-3.5" /> 智能补填（导入已识别发票）
+              </button>
+              <span className="text-[11px] text-slate-500 dark:text-slate-400">
                 提示：金额无需输入千分位，系统自动汇总。空行在打印时自动跳过。
-              </div>
+              </span>
+            </div>
             </div>
             <div className="overflow-x-auto rounded-xl border border-slate-300 dark:border-slate-700 shadow-inner">
               <table className="w-full border-collapse text-sm" style={{ tableLayout: 'fixed' }}>
                 <thead>
                   <tr>
-                    <th className={`${TH_CL} w-24`} style={{ textAlign: 'center' }}>日期</th>
+                    <th className={`${TH_CL} w-32`} style={{ textAlign: 'center' }}>日期</th>
                     <th className={TH_CL}>费用说明 / 起止地点</th>
                     {enabledCategories.map((c) => (
                       <th key={c.key} className={`${TH_CL}`} style={{ textAlign: 'right' }} title={c.hint}>
@@ -708,7 +743,7 @@ export default function SpreadsheetReimbursementPage() {
                         {c.hint && <div className="text-[10px] font-normal text-slate-500 dark:text-slate-400 mt-0.5 normal-case tracking-normal">（{c.hint}）</div>}
                       </th>
                     ))}
-                    <th className={`${TH_CL} w-16`} style={{ textAlign: 'right' }}>
+                    <th className={`${TH_CL} w-28`} style={{ textAlign: 'right' }}>
                       行小计
                     </th>
                     <th className={`${TH_CL} w-14`} style={{ textAlign: 'center' }}>单据张数</th>
@@ -847,13 +882,13 @@ export default function SpreadsheetReimbursementPage() {
 
                   {/* 合计行 */}
                   <tr className="bg-slate-800 text-white dark:bg-slate-100 dark:text-slate-900">
-                    <td className={`${TD_CL} !border-slate-900/30 text-center text-sm font-black uppercase tracking-[0.2em]`} colSpan={2}>
+                    <td className={`${TD_CL} !border-slate-900/30 text-center text-sm font-black uppercase tracking-wider`} colSpan={2}>
                       D · 单据合计（人民币）
                     </td>
                     {enabledCategories.map((c) => (
                       <td key={c.key} className={`${TD_CL} !border-slate-900/30`}></td>
                     ))}
-                    <td className={`${TD_CL} !border-slate-900/30 text-right font-black text-xl tabular-nums`}
+                    <td className={`${TD_CL} !border-slate-900/30 text-right font-black text-lg tabular-nums whitespace-nowrap`}
                       style={{ fontVariantNumeric: 'tabular-nums' }}>
                       {policy?.currency || '¥'}{fmtMoney(grandTotal)}
                     </td>
@@ -876,7 +911,7 @@ export default function SpreadsheetReimbursementPage() {
           {/* 大写金额 + 张数统计摘要 */}
           <div className="grid grid-cols-1 md:grid-cols-12 gap-4 mb-8">
             <div className="md:col-span-8 p-4 rounded-xl border-2 border-slate-800 dark:border-slate-200 bg-slate-50/40 dark:bg-slate-800/20">
-              <div className="text-[11px] uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400 mb-1">Amount in Words · 人民币大写</div>
+              <div className="text-[11px] uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-1">Amount in Words · 人民币大写</div>
               <div className="text-lg sm:text-xl font-bold text-slate-900 dark:text-white tracking-wide leading-relaxed break-words">
                 {toChineseAmount(grandTotal)}
               </div>
@@ -1035,7 +1070,7 @@ export default function SpreadsheetReimbursementPage() {
                   }`}>
                     <div className="flex items-start justify-between mb-2 gap-2">
                       <div className="min-w-0">
-                        <div className="text-[10px] uppercase tracking-[0.2em] text-slate-400 dark:text-slate-500">
+                        <div className="text-[10px] uppercase tracking-wider text-slate-400 dark:text-slate-500">
                           第 {idx + 1} 级 · {isApplicant ? 'Applicant' : 'Approver'}
                         </div>
                         <div className="font-bold text-slate-900 dark:text-white text-[15px] leading-tight mt-0.5">
@@ -1092,7 +1127,7 @@ export default function SpreadsheetReimbursementPage() {
           {/* 底部制度说明 */}
           {policy?.footerNotes && (
             <div className="mt-10 pt-4 border-t border-slate-200 dark:border-slate-800">
-              <div className="text-[11px] uppercase tracking-[0.2em] text-slate-400 dark:text-slate-500 mb-1.5">公司制度 / Remarks</div>
+              <div className="text-[11px] uppercase tracking-wider text-slate-400 dark:text-slate-500 mb-1.5">公司制度 / Remarks</div>
               <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed whitespace-pre-wrap print:text-[11px] print:text-slate-800">
                 {policy.footerNotes}
               </p>

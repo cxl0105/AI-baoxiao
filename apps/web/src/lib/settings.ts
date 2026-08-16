@@ -281,7 +281,7 @@ export interface AppSettingsState {
 
 // --- 默认值 ---
 export const DEFAULT_OCR_CONFIG: OcrProviderConfig = {
-  enabled: false,
+  enabled: true,
   provider: 'vision_llm',
   callMode: 'proxy',
   baseUrl: '',
@@ -304,7 +304,7 @@ export const DEFAULT_UI_SETTINGS: UiSettings = {
 
 export const DEFAULT_COMPANY_INFO: CompanyInfo = {
   fullName: '',
-  shortName: '智报销演示公司',
+  shortName: '',
   creditCode: '',
   logoUrl: '',
   industry: '互联网/信息技术',
@@ -480,7 +480,7 @@ export const useSettingsStore = create<AppSettingsState>()(
       resetPolicy: () => set({ policy: DEFAULT_REIMBURSEMENT_POLICY }),
     }),
     {
-      name: 'app-settings',
+      name: 'app-settings-v2',
       storage: createJSONStorage(() => localStorage),
       partialize: (s) => ({ ocr: s.ocr, ui: s.ui, company: s.company, policy: s.policy }) as unknown as AppSettingsState,
       // 深层合并：确保新增字段（如 expenseStandards/budgetControl/approvalRouting）
@@ -518,7 +518,7 @@ export const useSettingsStore = create<AppSettingsState>()(
 export function readOcrConfigSync(): OcrProviderConfig {
   if (typeof window === 'undefined') return DEFAULT_OCR_CONFIG
   try {
-    const raw = localStorage.getItem('app-settings')
+    const raw = localStorage.getItem('app-settings-v2')
     if (!raw) return DEFAULT_OCR_CONFIG
     const parsed = JSON.parse(raw)?.state
     return { ...DEFAULT_OCR_CONFIG, ...(parsed?.ocr || {}) }
@@ -531,7 +531,7 @@ export function readOcrConfigSync(): OcrProviderConfig {
 export function readCompanyInfoSync(): CompanyInfo {
   if (typeof window === 'undefined') return DEFAULT_COMPANY_INFO
   try {
-    const raw = localStorage.getItem('app-settings')
+    const raw = localStorage.getItem('app-settings-v2')
     if (!raw) return DEFAULT_COMPANY_INFO
     const parsed = JSON.parse(raw)?.state
     return { ...DEFAULT_COMPANY_INFO, ...(parsed?.company || {}) }
@@ -544,7 +544,7 @@ export function readCompanyInfoSync(): CompanyInfo {
 export function readReimbursementPolicySync(): ReimbursementPolicy {
   if (typeof window === 'undefined') return DEFAULT_REIMBURSEMENT_POLICY
   try {
-    const raw = localStorage.getItem('app-settings')
+    const raw = localStorage.getItem('app-settings-v2')
     if (!raw) return DEFAULT_REIMBURSEMENT_POLICY
     const parsed = JSON.parse(raw)?.state
     // 深层合并：数组以默认值兜底，避免老版本 localStorage 缺失字段

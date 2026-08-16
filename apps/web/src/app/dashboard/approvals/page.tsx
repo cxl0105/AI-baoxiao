@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
+import { useSubmittedStore, submittedToListItem } from '@/lib/submitted-store'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import {
@@ -53,7 +54,20 @@ export default function PendingApprovalPage() {
   useEffect(() => { setMounted(true) }, [])
   const role = (user?.role as Role) || 'employee'
   const roleInfo = ROLES[role] || ROLES.employee
-  const all = useMemo(() => generatePendingApproval(32), [])
+  const submittedList = useSubmittedStore((s) => s.list)
+  const all = useMemo(() => {
+    const mock = generatePendingApproval(32)
+    const submitted = submittedList
+      .filter((x) => x.status === 'pending')
+      .map((x) => ({
+        ...submittedToListItem(x),
+        submittedAt: x.createdAt,
+        urgent: false,
+        currentStep: 1,
+        totalSteps: 3,
+      }))
+    return [...submitted, ...mock]
+  }, [submittedList])
 
   // --- 权限拦截：员工无权访问审批页 ---
   const canViewApprovals = hasPermission(role, 'approval:view')
