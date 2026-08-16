@@ -310,7 +310,7 @@ export default function SpreadsheetReimbursementPage() {
   const [subsidy, setSubsidy] = useState<SubsidyState>({ subsidyKey: defaultSubsidyKey, fullDays: 0, halfDays: 0 })
   useEffect(() => {
     if (!isHydrated) return
-    // 默认根据起止日期计算：西门子规则"起程+返程各计一天 → end - start + 1"
+    // 默认根据起止日期计算："起程+返程各计一天 → end - start + 1"
     const calc = Math.max(0, dateDiffDays(startDate, endDate) + (startDate && endDate ? 1 : 0))
     setSubsidy((s) => ({ ...s, fullDays: s.fullDays || calc }))
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -559,7 +559,7 @@ export default function SpreadsheetReimbursementPage() {
               <ArrowLeft className="w-3.5 h-3.5" /> 我的报销
             </Link>
             <span>/</span>
-            <span>电子表格报销单（西门子风格）</span>
+            <span>电子表格报销单</span>
           </div>
           <h1 className="text-2xl font-semibold text-slate-900 dark:text-white flex items-center gap-2">
             <Table2 className="w-6 h-6 text-sky-600 dark:text-sky-400" />
@@ -826,7 +826,7 @@ export default function SpreadsheetReimbursementPage() {
                     <td className={TD_CL}></td>
                   </tr>
 
-                  {/* 出差补贴行（西门子风格独立一行） */}
+                  {/* 出差补贴行（独立一行） */}
                   {policy?.subsidyInSeparateRow !== false && (
                     <tr className="bg-gradient-to-r from-amber-50 to-orange-50 dark:from-amber-950/30 dark:to-orange-950/20 border-t-2 border-slate-300 dark:border-slate-700">
                       <td className={`${TD_CL} text-center text-xs uppercase tracking-wider font-bold text-amber-700 dark:text-amber-300`} colSpan={2}>

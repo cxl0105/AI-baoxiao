@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { useParams, useRouter } from 'next/navigation'
 import {
@@ -42,6 +42,7 @@ import {
 import type { ExpenseCategory } from '@/lib/api'
 import { runAudit, type AuditResult, type AuditCheckItem } from '@/lib/audit-engine'
 import { useSubmittedStore } from '@/lib/submitted-store'
+import { api, MOCK_MODE } from '@/lib/api'
 
 const CATEGORY_LABEL: Record<ExpenseCategory, string> = {
   travel: '差旅住宿', transport: '交通出行', meal: '餐饮',
@@ -64,7 +65,22 @@ export default function ReimbursementDetailPage() {
 
   // 根据路由 id 找对应 mock 数据；找不到就取第一条做 fallback 方便演示
   const submittedList = useSubmittedStore((s) => s.list)
+  const [apiDetail, setApiDetail] = useState<any | null>(null)
+  useEffect(() => {
+    if (MOCK_MODE) return
+    api.getReimbursement(params.id).then((d) => setApiDetail(d)).catch(() => setApiDetail(null))
+  }, [params.id])
   const detail = useMemo<ReimbursementDetail>(() => {
+    if (apiDetail) {
+      return {
+        ...apiDetail,
+        approver: apiDetail.approver || '',
+        items: (apiDetail.items || []).map((it: any) => ({ category: it.category, amount: it.amount, description: it.description || '', date: it.date || '' })),
+        timeline: apiDetail.timeline || [],
+        nextApprovers: apiDetail.nextApprovers || [],
+        attachmentUrls: apiDetail.attachmentUrls || [],
+      } as ReimbursementDetail
+    }
     const all = generateMockList(60)
     const found = all.find((r) => r.id === params.id) || all[0]
     const d = listItemToDetail(found)
@@ -79,7 +95,7 @@ export default function ReimbursementDetailPage() {
       }
     }
     return d
-  }, [params.id, submittedList])
+  }, [params.id, submittedList, apiDetail])
 
   const statusMeta = STATUS_META[detail.status]
 

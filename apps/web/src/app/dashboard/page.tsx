@@ -197,7 +197,7 @@ export default function DashboardPage() {
                 <TipItem>上传发票时，AI 会自动识别发票号、金额、日期，请核对后提交。</TipItem>
                 <TipItem>差旅报销需附出差审批单，餐费报销需注明事由与参与人员。</TipItem>
                 <TipItem>提交后可在「我的报销」中实时跟踪审批进度。</TipItem>
-                <TipItem>电子表格报销单支持西门子风格多级签字流程，适合复杂报销场景。</TipItem>
+                <TipItem>电子表格报销单支持多级签字流程，适合复杂报销场景。</TipItem>
               </div>
             </div>
           )}

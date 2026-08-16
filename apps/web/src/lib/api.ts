@@ -363,6 +363,37 @@ export const api = {
       throw err
     }
   },
+
+  async listReimbursements(params?: { status?: string; type?: string; page?: number; pageSize?: number }) {
+    const { data } = await instance.get<ApiResponse<{ list: any[]; pagination: { page: number; pageSize: number; total: number } }>>('/reimbursements', { params })
+    if (data.code !== 'SUCCESS' || !data.data) throw new Error(data.message || '获取列表失败')
+    return data.data
+  },
+  async getReimbursement(id: string) {
+    const { data } = await instance.get<ApiResponse<any>>(`/reimbursements/${id}`)
+    if (data.code !== 'SUCCESS' || !data.data) throw new Error(data.message || '获取详情失败')
+    return data.data
+  },
+  async submitReimbursement(id: string) {
+    const { data } = await instance.post<ApiResponse<any>>(`/reimbursements/${id}/submit`)
+    return data
+  },
+  async approveReimbursement(id: string) {
+    const { data } = await instance.post<ApiResponse<any>>(`/reimbursements/${id}/approve`)
+    return data
+  },
+  async rejectReimbursement(id: string, reason?: string) {
+    const { data } = await instance.post<ApiResponse<any>>(`/reimbursements/${id}/reject`, { reason })
+    return data
+  },
+  async revokeReimbursement(id: string, reason?: string) {
+    const { data } = await instance.post<ApiResponse<any>>(`/reimbursements/${id}/revoke`, { reason })
+    return data
+  },
+  async payReimbursement(id: string) {
+    const { data } = await instance.post<ApiResponse<any>>(`/reimbursements/${id}/pay`)
+    return data
+  },
 }
 
 // --- 智能 OCR 解析引擎（语义匹配，非随机） ---

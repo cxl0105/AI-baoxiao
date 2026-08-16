@@ -41,7 +41,7 @@ const navItemsConfig = [
     children: [
       { label: '报销单列表', href: '/dashboard/reimbursements' },
       { label: '智能新建（发票识别）', href: '/dashboard/reimbursements/new' },
-      { label: '电子表格报销单', href: '/dashboard/reimbursements/spreadsheet', badge: 'Siemens', badgeClass: 'bg-sky-500' },
+      { label: '电子表格报销单', href: '/dashboard/reimbursements/spreadsheet' },
     ],
   },
   { label: '待我审批', href: '/dashboard/approvals', icon: CheckSquare, badge: 3, perm: 'approval:view' as const },

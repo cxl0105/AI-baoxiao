@@ -1,7 +1,8 @@
 'use client'
 
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useSubmittedStore, submittedToListItem } from '@/lib/submitted-store'
+import { api, MOCK_MODE } from '@/lib/api'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import {
@@ -65,10 +66,16 @@ function StatusBadge({ status }: { status: ReimbursementStatus }) {
 export default function ReimbursementListPage() {
   const router = useRouter()
   const submittedList = useSubmittedStore((s) => s.list)
+  const [apiList, setApiList] = useState<any[] | null>(null)
+  useEffect(() => {
+    if (MOCK_MODE) return
+    api.listReimbursements({ pageSize: 200 }).then((res) => setApiList(res.list)).catch(() => setApiList([]))
+  }, [])
   const allData = useMemo(() => {
-    const mock = generateMockList(72)
-    return [...submittedList.map(submittedToListItem), ...mock]
-  }, [submittedList])
+    const local = submittedList.map(submittedToListItem)
+    const base = apiList !== null ? apiList : generateMockList(72)
+    return [...local, ...base]
+  }, [submittedList, apiList])
 
   const [activeTab, setActiveTab] = useState<typeof STATUS_TABS[number]['key']>('all')
   const [search, setSearch] = useState('')

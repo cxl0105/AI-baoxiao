@@ -53,7 +53,7 @@ export interface UiSettings {
   uploadMaxMb: number
 }
 
-/** 费用分类（西门子风格：交通费 / 打车费 / 住宿费 / 餐饮费 / 其它费用） */
+/** 费用分类（交通费 / 打车费 / 住宿费 / 餐饮费 / 其它费用） */
 export type ExpenseCategoryKey =
   | 'transport'      // 交通费（机票/火车/长途汽车/轮船等公共交通）
   | 'taxi'           // 打车费（出租车/网约车/短途出行）
@@ -181,7 +181,7 @@ export interface ApprovalRoutingRule {
 
 /** 报销单编号生成格式 */
 export interface ReimbursementSerialFormat {
-  /** 前缀，如 BX / REI / SIEMENS-EXP */
+  /** 前缀，如 BX / REI */
   prefix: string
   /** 日期格式：yyyyMM / yyyyMMdd / none */
   datePart: 'yyyyMM' | 'yyyyMMdd' | 'none'
@@ -191,7 +191,7 @@ export interface ReimbursementSerialFormat {
   separator: '-' | '_' | '/' | ''
 }
 
-/** 报销规则（西门子风格出差报销单配置）——可由公司管理员在「系统设置-报销规则」中统一维护 */
+/** 报销规则（出差报销单配置）——可由公司管理员在「系统设置-报销规则」中统一维护 */
 export interface ReimbursementPolicy {
   /** 单据标题（抬头），如：出差费用报销单 / 员工差旅费报销申请表 */
   formTitle: string
@@ -215,7 +215,7 @@ export interface ReimbursementPolicy {
   requireProjectCode: boolean
   /** 币种符号 */
   currency: string
-  /** 补贴是否单独列行展示（默认 true：西门子风格独立一行"出差补贴汇总"） */
+  /** 补贴是否单独列行展示（默认 true：独立一行"出差补贴汇总"） */
   subsidyInSeparateRow: boolean
   /** 备注/报销制度摘要，打印在报销单底部表格外 */
   footerNotes: string
@@ -320,7 +320,7 @@ export const DEFAULT_COMPANY_INFO: CompanyInfo = {
   notes: '',
 }
 
-/** 默认报销规则（西门子风格）——管理员可在系统设置→报销规则 Tab 修改 */
+/** 默认报销规则——管理员可在系统设置→报销规则 Tab 修改 */
 export const DEFAULT_REIMBURSEMENT_POLICY: ReimbursementPolicy = {
   formTitle: '出差费用报销单',
   formSubtitle: '本单据由报销人逐项填写，附原始发票后按签字顺序递交审批。补贴按公司制度标准计算。',

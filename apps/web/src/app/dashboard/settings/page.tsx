@@ -1416,7 +1416,7 @@ function PolicyTab(props: {
       <section className="xl:col-span-2 space-y-6">
         {/* 单据抬头 */}
         <Card title="单据抬头与格式" icon={<ClipboardList className="w-5 h-5" />} color="from-sky-500 to-indigo-500"
-          subtitle="控制西门子风格报销单的标题、副标题与编号生成规则。">
+          subtitle="控制报销单的标题、副标题与编号生成规则。">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <Field label="单据标题（抬头）" icon={<Receipt className="w-4 h-4" />} required hint="如：出差费用报销单 / 员工差旅费报销申请表">
               <input value={form.formTitle} onChange={(e) => patch({ formTitle: e.target.value })}
@@ -1519,7 +1519,7 @@ function PolicyTab(props: {
           <div className="mt-3 flex items-center gap-3 text-xs text-slate-500 dark:text-slate-400">
             <label className="inline-flex items-center gap-2">
               <Switch checked={form.subsidyInSeparateRow} onChange={(v) => patch({ subsidyInSeparateRow: v })} />
-              补贴在明细表末尾单独一行展示（西门子风格）
+              补贴在明细表末尾单独一行展示
             </label>
           </div>
         </Card>
@@ -1664,7 +1664,7 @@ function PolicyTab(props: {
             <li>补贴标准、签字层级改动<b>不影响已保存的历史报销单</b>（历史单据保留创建时快照）。</li>
           </ul>
         </Card>
-        <Card title="西门子风格报销单要点" icon={<Receipt className="w-5 h-5" />} color="from-sky-500 to-blue-600" compact>
+        <Card title="报销单要点" icon={<Receipt className="w-5 h-5" />} color="from-sky-500 to-blue-600" compact>
           <ol className="text-xs text-slate-600 dark:text-slate-300 space-y-1.5 leading-relaxed list-decimal list-inside marker:text-sky-400 marker:font-semibold">
             <li>单据头：<b>编号 · 报销人 · 部门 · 出差事由 · 起止日期 · 出差地点</b></li>
             <li>明细表：按日期分多行，每行包含 <b>交通 / 打车 / 住宿 / 餐饮 / 其它</b> 5 列 + 小计</li>
