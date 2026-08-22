@@ -109,6 +109,28 @@ export default function SettingsPage() {
   const dirtyCompanyRef = useRef(false)
   const dirtyPolicyRef = useRef(false)
 
+  // --- 从后端拉取公司设置（真实 SaaS 持久化）：进入页面时尝试加载，若有数据则填充 store ---
+  const [settingsLoaded, setSettingsLoaded] = useState(false)
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      try {
+        const remote = await api.getSettings()
+        if (cancelled || settingsLoaded) return
+        // 仅当后端确实有数据（非空对象）时才覆盖本地默认值
+        if (remote?.company && Object.keys(remote.company).length > 0) setCompany(remote.company)
+        if (remote?.policy && Object.keys(remote.policy).length > 0) setPolicy(remote.policy)
+        if (remote?.ocr && Object.keys(remote.ocr).length > 0) setOcr(remote.ocr)
+        if (remote?.ui && Object.keys(remote.ui).length > 0) patchUi(remote.ui)
+        setSettingsLoaded(true)
+      } catch {
+        // 后端无设置或未登录，静默忽略，保留本地默认
+        if (!cancelled) setSettingsLoaded(true)
+      }
+    })()
+    return () => { cancelled = true }
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
   // --- 修复 zustand persist rehydration 竞争：首次初始化后如果 store 从
   //     localStorage 加载回真实数据，同步回尚未被用户编辑过的本地表单 ---
   useEffect(() => {
@@ -176,8 +198,8 @@ export default function SettingsPage() {
   // callMode=proxy 时，Base URL / Model / API Key 这些「前端直连敏感字段」应该隐藏
   const showDirectCredentials = form.callMode === 'direct'
 
-  // --- 保存（四个分区一起保存）---
-  const doSave = useCallback(() => {
+  // --- 保存（四个分区一起保存 + 同步到后端）---
+  const doSave = useCallback(async () => {
     const ocrNext: OcrProviderConfig =
       form.provider === 'mock' ? { ...form, enabled: false } : form
     setOcr(ocrNext)
@@ -189,9 +211,21 @@ export default function SettingsPage() {
     dirtyUiRef.current = false
     dirtyCompanyRef.current = false
     dirtyPolicyRef.current = false
-    setSaveState({ kind: 'ok', msg: '所有设置已保存 ✓' })
+    // 同步到后端（公司信息/报销规则/OCR/UI 持久化到 company_settings 表）
+    try {
+      await api.updateSettings({
+        company: companyForm,
+        policy: policyForm,
+        ocr: ocrNext,
+        ui: uiForm,
+      })
+      setSaveState({ kind: 'ok', msg: '所有设置已保存 ✓（已同步到服务器）' })
+    } catch (e) {
+      const m = e instanceof Error ? e.message : String(e)
+      setSaveState({ kind: 'ok', msg: `已保存到本地，但同步服务器失败：${m}` })
+    }
     if (saveTimerRef.current) window.clearTimeout(saveTimerRef.current)
-    saveTimerRef.current = window.setTimeout(() => setSaveState({ kind: 'idle', msg: '' }), 2600)
+    saveTimerRef.current = window.setTimeout(() => setSaveState({ kind: 'idle', msg: '' }), 3200)
   }, [form, uiForm, companyForm, policyForm, setOcr, patchUi, setCompany, setPolicy])
 
   // --- 还原当前 Tab ---

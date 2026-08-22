@@ -65,6 +65,7 @@ export const reimbursements = pgTable(
     description: text('description'),
     startDate: text('start_date'),
     endDate: text('end_date'),
+    projectCode: text('project_code'),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
   },
@@ -137,6 +138,39 @@ export const approvalSteps = pgTable(
   })
 )
 
+// 预算（部门/项目）
+export const budgets = pgTable(
+  'budgets',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id').references(() => companies.id),
+    kind: text('kind').notNull().default('department'),
+    name: text('name').notNull(),
+    code: text('code'),
+    amount: numeric('amount', { precision: 12, scale: 2 }).notNull().default('0'),
+    period: text('period').notNull().default('monthly'),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => ({
+    companyIdx: index('budgets_company_idx').on(t.companyId),
+  })
+)
+
+// 公司设置（公司信息/报销规则/OCR/UI，jsonb 存储）
+export const companySettings = pgTable(
+  'company_settings',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    companyId: uuid('company_id').notNull().unique().references(() => companies.id),
+    company: jsonb('company').notNull().default({}),
+    policy: jsonb('policy').notNull().default({}),
+    ocr: jsonb('ocr').notNull().default({}),
+    ui: jsonb('ui').notNull().default({}),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  }
+)
+
 // 类型导出
 export type User = typeof users.$inferSelect
 export type NewUser = typeof users.$inferInsert
@@ -144,3 +178,6 @@ export type Reimbursement = typeof reimbursements.$inferSelect
 export type NewReimbursement = typeof reimbursements.$inferInsert
 export type Invoice = typeof invoices.$inferSelect
 export type NewInvoice = typeof invoices.$inferInsert
+export type Budget = typeof budgets.$inferSelect
+export type NewBudget = typeof budgets.$inferInsert
+export type CompanySetting = typeof companySettings.$inferSelect

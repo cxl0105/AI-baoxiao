@@ -294,6 +294,18 @@ export default function NewReimbursementPage() {
         if (result.status === 'success') {
           // OCR 成功 → 新建一条明细并绑定 linkedInvoiceId
           append(invoiceToItem(updated) as any)
+          // 发票落库到后端 invoices 表（真实持久化，供发票池/验真/查重使用）
+          api.createInvoice({
+            fileName: file.name,
+            invoiceNumber: (result as any).invoiceNo || '',
+            amount: result.amount || 0,
+            taxAmount: (result as any).taxAmount || 0,
+            date: (result as any).date || '',
+            sellerName: (result as any).sellerName || '',
+            sellerTaxId: (result as any).sellerTaxNo || '',
+            buyerName: (result as any).buyerName || '',
+            description: result.description || '',
+          }).catch(() => { /* 落库失败不阻断 OCR 主流程 */ })
           pushFileToast(
             `识别成功：${file.name}（¥ ${result.amount.toLocaleString('zh-CN', { minimumFractionDigits: 2 })}）`,
             'success'

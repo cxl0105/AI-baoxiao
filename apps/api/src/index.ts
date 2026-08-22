@@ -51,6 +51,11 @@ import { reimbursementRoutes } from './routes/reimbursement'
 import { userRoutes } from './routes/user'
 import { ocrRoutes } from './routes/ocr'
 import { statsRoutes } from './routes/stats'
+import { approvalRecordsRoutes } from './routes/approval-records'
+import { budgetRoutes } from './routes/budgets'
+import { settingsRoutes } from './routes/settings'
+import { invoiceRoutes } from './routes/invoices'
+import { analyticsRoutes } from './routes/analytics'
 import { apiReference } from './routes/docs'
 
 const app = new Hono({ strict: false })
@@ -90,6 +95,11 @@ api.route('/reimbursements', reimbursementRoutes)
 api.route('/users', userRoutes)
 api.route('/ocr', ocrRoutes)
 api.route('/stats', statsRoutes)
+api.route('/approval-records', approvalRecordsRoutes)
+api.route('/budgets', budgetRoutes)
+api.route('/settings', settingsRoutes)
+api.route('/invoices', invoiceRoutes)
+api.route('/analytics', analyticsRoutes)
 
 app.route('/api/v1', api)
 

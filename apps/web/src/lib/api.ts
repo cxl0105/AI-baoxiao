@@ -380,6 +380,11 @@ export const api = {
     if (data.code !== 'SUCCESS' || !data.data) throw new Error(data.message || '获取统计数据失败')
     return data.data
   },
+  async getApprovalRecords() {
+    const { data } = await instance.get<ApiResponse<any>>('/approval-records')
+    if (data.code !== 'SUCCESS' || !data.data) throw new Error(data.message || '获取审批记录失败')
+    return data.data
+  },
   async getReimbursement(id: string) {
     const { data } = await instance.get<ApiResponse<any>>(`/reimbursements/${id}`)
     if (data.code !== 'SUCCESS' || !data.data) throw new Error(data.message || '获取详情失败')
@@ -442,6 +447,80 @@ export const api = {
   async deleteMember(id: string) {
     const { data } = await instance.delete<ApiResponse<any>>(`/users/${id}`)
     if (data.code !== 'SUCCESS') throw new Error(data.message || '删除成员失败')
+    return data.data
+  },
+
+  // === 预算管理 ===
+  async getBudgets(kind?: string) {
+    const { data } = await instance.get<ApiResponse<any>>('/budgets', { params: kind ? { kind } : {} })
+    if (data.code !== 'SUCCESS' || !data.data) throw new Error(data.message || '获取预算失败')
+    return data.data
+  },
+  async createBudget(payload: { kind: string; name: string; code?: string; amount: number; period?: string }) {
+    const { data } = await instance.post<ApiResponse<any>>('/budgets', payload)
+    if (data.code !== 'SUCCESS') throw new Error(data.message || '创建预算失败')
+    return data.data
+  },
+  async updateBudget(id: string, payload: Partial<{ name: string; code: string; amount: number; period: string }>) {
+    const { data } = await instance.patch<ApiResponse<any>>(`/budgets/${id}`, payload)
+    if (data.code !== 'SUCCESS') throw new Error(data.message || '更新预算失败')
+    return data.data
+  },
+  async deleteBudget(id: string) {
+    const { data } = await instance.delete<ApiResponse<any>>(`/budgets/${id}`)
+    if (data.code !== 'SUCCESS') throw new Error(data.message || '删除预算失败')
+    return data.data
+  },
+
+  // === 系统设置 ===
+  async getSettings() {
+    const { data } = await instance.get<ApiResponse<any>>('/settings')
+    if (data.code !== 'SUCCESS' || !data.data) throw new Error(data.message || '获取设置失败')
+    return data.data
+  },
+  async updateSettings(payload: { company?: any; policy?: any; ocr?: any; ui?: any }) {
+    const { data } = await instance.put<ApiResponse<any>>('/settings', payload)
+    if (data.code !== 'SUCCESS') throw new Error(data.message || '保存设置失败')
+    return data.data
+  },
+
+  // === 发票池 ===
+  async getInvoices(params?: { verifyStatus?: string; keyword?: string }) {
+    const { data } = await instance.get<ApiResponse<any>>('/invoices', { params: params || {} })
+    if (data.code !== 'SUCCESS' || !data.data) throw new Error(data.message || '获取发票失败')
+    return data.data
+  },
+  async createInvoice(payload: {
+    fileName?: string; fileUrl?: string; mimeType?: string; size?: number;
+    invoiceCode?: string; invoiceNumber?: string; amount?: number; taxAmount?: number;
+    date?: string; sellerName?: string; sellerTaxId?: string; buyerName?: string;
+    description?: string; invoiceType?: string; reimbursementId?: string;
+  }) {
+    const { data } = await instance.post<ApiResponse<any>>('/invoices', payload)
+    if (data.code !== 'SUCCESS') throw new Error(data.message || '发票落库失败')
+    return data.data
+  },
+  async verifyInvoice(id: string) {
+    const { data } = await instance.post<ApiResponse<any>>(`/invoices/${id}/verify`)
+    if (data.code !== 'SUCCESS' || !data.data) throw new Error(data.message || '验真失败')
+    return data.data
+  },
+
+  async voidInvoice(id: string) {
+    const { data } = await instance.post<ApiResponse<any>>(`/invoices/${id}/void`)
+    if (data.code !== 'SUCCESS') throw new Error(data.message || '作废失败')
+    return data.data
+  },
+  async updateInvoice(id: string, payload: { status?: string; reimbursementId?: string }) {
+    const { data } = await instance.patch<ApiResponse<any>>(`/invoices/${id}`, payload)
+    if (data.code !== 'SUCCESS') throw new Error(data.message || '更新发票失败')
+    return data.data
+  },
+
+  // === 分析报表 ===
+  async getAnalytics(params?: { year?: number; quarter?: string }) {
+    const { data } = await instance.get<ApiResponse<any>>('/analytics', { params: params || {} })
+    if (data.code !== 'SUCCESS' || !data.data) throw new Error(data.message || '获取分析数据失败')
     return data.data
   },
 

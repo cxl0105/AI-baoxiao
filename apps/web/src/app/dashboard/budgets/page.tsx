@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo, useState } from 'react'
+import { useMemo, useState, useEffect, useCallback } from 'react'
 import {
   Gauge,
   Plus,
@@ -11,11 +11,11 @@ import {
   Building2,
   FolderKanban,
   AlertTriangle,
-  CheckCircle2,
   Save,
   X,
+  Loader2,
 } from 'lucide-react'
-import { useSettingsStore, type DepartmentBudget, type ProjectBudget } from '@/lib/settings'
+import { api } from '@/lib/api'
 import { utilizationLevel } from '@/lib/expense-standard'
 import { useAuthStore } from '@/lib/auth'
 import { hasPermission } from '@/lib/rbac'
@@ -23,23 +23,66 @@ import { hasPermission } from '@/lib/rbac'
 const fmtMoney = (v: number) =>
   (Number.isFinite(v) ? v : 0).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 
-const uid = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4)
-
 type Tab = 'department' | 'project'
+
+interface DepartmentBudget {
+  id: string
+  department: string
+  amount: number
+  usedAmount: number
+}
+interface ProjectBudget {
+  id: string
+  projectCode: string
+  projectName: string
+  amount: number
+  usedAmount: number
+}
 
 export default function BudgetManagementPage() {
   const { user } = useAuthStore()
-  const { policy, patchPolicy } = useSettingsStore()
-  const bc = policy?.budgetControl
   const canManage = hasPermission(user?.role, 'settings:view')
 
   const [tab, setTab] = useState<Tab>('department')
   const [editing, setEditing] = useState<DepartmentBudget | ProjectBudget | null>(null)
   const [isAdding, setIsAdding] = useState(false)
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+  const [errMsg, setErrMsg] = useState('')
+
+  const [bc, setBc] = useState<{
+    enabled: boolean
+    period: string
+    overBudgetAction: string
+    departmentBudgets: DepartmentBudget[]
+    projectBudgets: ProjectBudget[]
+  }>({ enabled: true, period: 'monthly', overBudgetAction: 'warn', departmentBudgets: [], projectBudgets: [] })
+
+  const load = useCallback(async () => {
+    try {
+      const d = await api.getBudgets()
+      setBc({
+        enabled: (d.budgetControl?.enabled) !== false,
+        period: d.budgetControl?.period || 'monthly',
+        overBudgetAction: d.budgetControl?.overBudgetAction || 'warn',
+        departmentBudgets: (d.departmentBudgets || []).map((x: any) => ({
+          id: x.id, department: x.department || x.name || '', amount: Number(x.amount) || 0, usedAmount: Number(x.usedAmount) || 0,
+        })),
+        projectBudgets: (d.projectBudgets || []).map((x: any) => ({
+          id: x.id, projectCode: x.projectCode || x.code || '', projectName: x.projectName || x.name || '', amount: Number(x.amount) || 0, usedAmount: Number(x.usedAmount) || 0,
+        })),
+      })
+    } catch (e) {
+      setErrMsg(e instanceof Error ? e.message : String(e))
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => { load() }, [load])
 
   // 统计
   const stats = useMemo(() => {
-    if (!bc) return { totalBudget: 0, totalUsed: 0, count: 0, overCount: 0 }
     const list = tab === 'department' ? bc.departmentBudgets : bc.projectBudgets
     const totalBudget = list.reduce((s, x) => s + x.amount, 0)
     const totalUsed = list.reduce((s, x) => s + x.usedAmount, 0)
@@ -47,38 +90,44 @@ export default function BudgetManagementPage() {
     return { totalBudget, totalUsed, count: list.length, overCount }
   }, [bc, tab])
 
-  if (!bc) {
-    return (
-      <div className="p-8 text-center text-slate-500">
-        预算控制未启用
-      </div>
-    )
-  }
-
-  const handleSave = (item: DepartmentBudget | ProjectBudget) => {
-    if (tab === 'department') {
-      const exists = bc.departmentBudgets.find((d) => d.id === (item as DepartmentBudget).id)
-      const next = exists
-        ? bc.departmentBudgets.map((d) => (d.id === (item as DepartmentBudget).id ? (item as DepartmentBudget) : d))
-        : [...bc.departmentBudgets, item as DepartmentBudget]
-      patchPolicy({ budgetControl: { ...bc, departmentBudgets: next } })
-    } else {
-      const exists = bc.projectBudgets.find((p) => p.id === (item as ProjectBudget).id)
-      const next = exists
-        ? bc.projectBudgets.map((p) => (p.id === (item as ProjectBudget).id ? (item as ProjectBudget) : p))
-        : [...bc.projectBudgets, item as ProjectBudget]
-      patchPolicy({ budgetControl: { ...bc, projectBudgets: next } })
+  const handleSave = async (item: DepartmentBudget | ProjectBudget) => {
+    setSaving(true)
+    setErrMsg('')
+    try {
+      if (tab === 'department') {
+        const d = item as DepartmentBudget
+        const payload = { kind: 'department', name: d.department, amount: d.amount }
+        if (d.id && !d.id.startsWith('tmp-')) {
+          await api.updateBudget(d.id, { name: d.department, amount: d.amount })
+        } else {
+          await api.createBudget(payload)
+        }
+      } else {
+        const p = item as ProjectBudget
+        const payload = { kind: 'project', name: p.projectName, code: p.projectCode, amount: p.amount }
+        if (p.id && !p.id.startsWith('tmp-')) {
+          await api.updateBudget(p.id, { name: p.projectName, code: p.projectCode, amount: p.amount })
+        } else {
+          await api.createBudget(payload)
+        }
+      }
+      setEditing(null)
+      setIsAdding(false)
+      await load()
+    } catch (e) {
+      setErrMsg(e instanceof Error ? e.message : String(e))
+    } finally {
+      setSaving(false)
     }
-    setEditing(null)
-    setIsAdding(false)
   }
 
-  const handleDelete = (id: string) => {
+  const handleDelete = async (id: string) => {
     if (!confirm('确认删除该预算项？')) return
-    if (tab === 'department') {
-      patchPolicy({ budgetControl: { ...bc, departmentBudgets: bc.departmentBudgets.filter((d) => d.id !== id) } })
-    } else {
-      patchPolicy({ budgetControl: { ...bc, projectBudgets: bc.projectBudgets.filter((p) => p.id !== id) } })
+    try {
+      await api.deleteBudget(id)
+      await load()
+    } catch (e) {
+      alert(e instanceof Error ? e.message : String(e))
     }
   }
 
@@ -111,6 +160,12 @@ export default function BudgetManagementPage() {
           </button>
         )}
       </div>
+
+      {errMsg && (
+        <div className="rounded-lg bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 text-red-600 dark:text-red-300 text-sm px-4 py-2">
+          {errMsg}
+        </div>
+      )}
 
       {/* 统计卡片 */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
@@ -191,13 +246,20 @@ export default function BudgetManagementPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-              {list.length === 0 && (
+              {loading ? (
+                <tr>
+                  <td colSpan={canManage ? 7 : 6} className="text-center py-12 text-slate-400">
+                    <Loader2 className="w-5 h-5 animate-spin inline mr-2" />
+                    加载中...
+                  </td>
+                </tr>
+              ) : list.length === 0 ? (
                 <tr>
                   <td colSpan={canManage ? 7 : 6} className="text-center py-12 text-slate-400">
                     暂无{tab === 'department' ? '部门' : '项目'}预算，点击右上角「新增预算」添加
                   </td>
                 </tr>
-              )}
+              ) : null}
               {list.map((item) => {
                 const used = item.usedAmount
                 const budget = item.amount
@@ -275,6 +337,7 @@ export default function BudgetManagementPage() {
         <BudgetEditModal
           tab={tab}
           item={editing}
+          saving={saving}
           onClose={() => { setEditing(null); setIsAdding(false) }}
           onSave={handleSave}
         />
@@ -313,24 +376,25 @@ function StatCard({ title, value, icon, color, subtitle }: {
 }
 
 /* ===== 编辑弹窗 ===== */
-function BudgetEditModal({ tab, item, onClose, onSave }: {
+function BudgetEditModal({ tab, item, saving, onClose, onSave }: {
   tab: Tab
   item: DepartmentBudget | ProjectBudget | null
+  saving: boolean
   onClose: () => void
   onSave: (item: DepartmentBudget | ProjectBudget) => void
 }) {
   const isDept = tab === 'department'
   const [form, setForm] = useState<any>(
     item || (isDept
-      ? { id: uid(), department: '', amount: 0, usedAmount: 0 }
-      : { id: uid(), projectCode: '', projectName: '', amount: 0, usedAmount: 0 })
+      ? { id: 'tmp-' + Date.now(), department: '', amount: 0, usedAmount: 0 }
+      : { id: 'tmp-' + Date.now(), projectCode: '', projectName: '', amount: 0, usedAmount: 0 })
   )
 
   const valid = isDept ? form.department?.trim() : (form.projectCode?.trim() && form.projectName?.trim())
 
   const handleSubmit = () => {
     if (!valid) return
-    onSave({ ...form, amount: Number(form.amount) || 0, usedAmount: Number(form.usedAmount) || 0 })
+    onSave({ ...form, amount: Number(form.amount) || 0 })
   }
 
   return (
@@ -380,26 +444,16 @@ function BudgetEditModal({ tab, item, onClose, onSave }: {
               </div>
             </>
           )}
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">预算额度（元）</label>
-              <input
-                type="number"
-                value={form.amount || 0}
-                onChange={(e) => setForm({ ...form, amount: e.target.value })}
-                className="w-full px-3 py-2 text-sm bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg outline-none focus:ring-2 focus:ring-brand-500/30 text-slate-800 dark:text-slate-100"
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">已使用（元）</label>
-              <input
-                type="number"
-                value={form.usedAmount || 0}
-                onChange={(e) => setForm({ ...form, usedAmount: e.target.value })}
-                className="w-full px-3 py-2 text-sm bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg outline-none focus:ring-2 focus:ring-brand-500/30 text-slate-800 dark:text-slate-100"
-              />
-            </div>
+          <div>
+            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">预算额度（元）</label>
+            <input
+              type="number"
+              value={form.amount || 0}
+              onChange={(e) => setForm({ ...form, amount: e.target.value })}
+              className="w-full px-3 py-2 text-sm bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg outline-none focus:ring-2 focus:ring-brand-500/30 text-slate-800 dark:text-slate-100"
+            />
           </div>
+          <p className="text-xs text-slate-400">已使用金额由系统根据已审批通过的报销单实时计算，不可手动修改。</p>
         </div>
         <div className="flex items-center justify-end gap-2 mt-6">
           <button
@@ -410,10 +464,10 @@ function BudgetEditModal({ tab, item, onClose, onSave }: {
           </button>
           <button
             onClick={handleSubmit}
-            disabled={!valid}
+            disabled={!valid || saving}
             className="inline-flex items-center gap-1.5 px-4 py-2 text-sm font-medium text-white bg-brand-600 hover:bg-brand-700 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg transition-colors"
           >
-            <Save className="w-4 h-4" />
+            {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
             保存
           </button>
         </div>

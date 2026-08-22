@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import {
   ListChecks,
@@ -20,7 +20,7 @@ import {
   Calendar,
   CircleDollarSign,
 } from 'lucide-react'
-import { CATEGORY_LABEL, type ExpenseCategory } from '@/lib/api'
+import { api, CATEGORY_LABEL, type ExpenseCategory } from '@/lib/api'
 
 type ReimburseStatus = 'pending' | 'approved' | 'rejected' | 'draft' | 'revoked'
 type Tab = 'mine' | 'participated'
@@ -150,111 +150,39 @@ const TYPE_OPTIONS: Array<{ value: 'all' | MineRow['type']; label: string }> = [
   { value: 'training', label: '培训报销' },
 ]
 
-const APPLICANTS = ['张伟', '王芳', '李娜', '刘洋', '陈静', '赵磊', '黄敏']
-const DEPTS = ['研发部', '产品部', '市场部', '销售部', '财务部', '人力资源部', '运营部']
-const APPROVERS = ['财务（孙丽）', '部门主管（周杰）', '总经理（吴强）', '行政（郑凯）']
-
-// 固定锚点，避免 SSR/客户端 new Date() 不一致引发 hydrate error
-const ANCHOR_ISO = '2026-08-08T00:00:00Z'
-function daysAgoDeterministic(n: number, minuteOffset = 0): string {
-  const base = new Date(ANCHOR_ISO)
-  base.setUTCDate(base.getUTCDate() - n)
-  base.setUTCHours(9 + (n % 7), (n * 11 + minuteOffset) % 60, 0, 0)
-  const p = (x: number) => String(x).padStart(2, '0')
-  return `${base.getUTCFullYear()}-${p(base.getUTCMonth() + 1)}-${p(base.getUTCDate())} ${p(base.getUTCHours())}:${p(base.getUTCMinutes())}`
-}
-
-function pickFrom<T>(arr: readonly T[], seed: number): T {
-  return arr[((seed % arr.length) + arr.length) % arr.length]
-}
-
-function makeMockData(): Row[] {
-  const TYPE_POOL_A: readonly MineRow['type'][] = ['daily', 'travel', 'purchase', 'daily', 'conference', 'training']
-  const mineList: MineRow[] = Array.from({ length: 18 }).map((_, i) => {
-    const statusRand = i % 7
-    const status: ReimburseStatus =
-      statusRand === 0 ? 'pending'
-      : statusRand === 1 ? 'approved'
-      : statusRand === 2 ? 'approved'
-      : statusRand === 3 ? 'rejected'
-      : statusRand === 4 ? 'draft'
-      : statusRand === 5 ? 'revoked'
-      : 'approved'
-    const totalSteps = 3
-    const currentStep =
-      status === 'draft' ? 0
-      : status === 'approved' ? totalSteps
-      : status === 'rejected' ? 1 + (i % 2)
-      : status === 'revoked' ? 1
-      : 1 + (i % 2)
-    return {
-      tab: 'mine',
-      id: 'BX' + (20240001 + i),
-      code: 'BX-' + (20240001 + i),
-      title: [
-        '2024 年 Q3 北京客户拜访差旅',
-        '打印机耗材采购报销单',
-        '月度团队建设聚餐报销',
-        '上海行业峰会差旅报销',
-        '新员工电脑采购报销',
-        '季度财务培训费',
-        '办公用品（7月批次）',
-      ][i % 7] + ` #${i + 1}`,
-      type: pickFrom(TYPE_POOL_A, i * 5 + 2),
-      category: (['travel', 'meal', 'office', 'transport', 'other'] as const)[i % 5],
-      amount: +(120 + i * 183.47).toFixed(2),
-      invoiceCount: 1 + (i % 4),
-      createdAt: daysAgoDeterministic(i * 3 + 1, 0),
-      status,
-      submittedAt: status === 'draft' ? '' : daysAgoDeterministic(i * 3, 2),
-      currentApprover: APPROVERS[Math.max(0, currentStep - 1)] || '—',
-      currentStep,
-      totalSteps,
-      updatedAt: daysAgoDeterministic(i, 3),
-    }
-  })
-  const TYPE_POOL_B: readonly MineRow['type'][] = ['daily', 'travel', 'conference', 'training']
-  const participated: ParticipatedRow[] = Array.from({ length: 12 }).map((_, i) => {
-    const a: ActionTaken =
-      i % 4 === 0 ? 'rejected'
-      : i % 4 === 1 ? 'added_approver'
-      : i % 4 === 2 ? 'transferred'
-      : 'approved'
-    const finalStatus: ReimburseStatus =
-      a === 'rejected' ? 'rejected'
-      : a === 'transferred' ? 'pending'
-      : i % 3 === 0 ? 'pending'
-      : 'approved'
-    return {
-      tab: 'participated',
-      id: 'BX' + (30240001 + i),
-      code: 'BX-' + (30240001 + i),
-      title: [
-        '华东区销售月度招待费',
-        '产品部 UI 设计工具年费',
-        '公司年会场地预订',
-        '员工季度体检费',
-        '差旅机票 + 酒店费用',
-      ][i % 5] + ` #${i + 1}`,
-      type: pickFrom(TYPE_POOL_B, i * 3 + 1),
-      category: (['meal', 'office', 'travel', 'training', 'entertainment'] as const)[i % 5],
-      amount: +(300 + i * 427.11).toFixed(2),
-      invoiceCount: 2 + (i % 3),
-      createdAt: daysAgoDeterministic(i * 5 + 2, 5),
-      applicant: APPLICANTS[i % APPLICANTS.length],
-      applicantDept: DEPTS[i % DEPTS.length],
-      finalStatus,
-      myLastActionAt: daysAgoDeterministic(i * 3 + 1, 7),
-      myLastAction: a,
-      myRole: ['第 1 级（部门主管）', '第 2 级（财务）', '第 3 级（总经理）'][i % 3],
-    }
-  })
-  return [...mineList, ...participated]
-}
-
 export default function ApprovalRecordsPage() {
   const [tab, setTab] = useState<Tab>('mine')
-  const [rows] = useState<Row[]>(() => makeMockData())
+  const [rows, setRows] = useState<Row[]>([])
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    let cancelled = false
+    api
+      .getApprovalRecords()
+      .then((d) => {
+        if (cancelled) return
+        const mine: MineRow[] = (d.mine || []).map((r: any) => ({
+          ...r,
+          tab: 'mine' as const,
+          type: (r.type as MineRow['type']) || 'daily',
+          category: (r.category as ExpenseCategory) || 'other',
+          amount: Number(r.amount) || 0,
+          invoiceCount: Number(r.invoiceCount) || 0,
+        }))
+        const participated: ParticipatedRow[] = (d.participated || []).map((r: any) => ({
+          ...r,
+          tab: 'participated' as const,
+          type: (r.type as MineRow['type']) || 'daily',
+          category: (r.category as ExpenseCategory) || 'other',
+          amount: Number(r.amount) || 0,
+          invoiceCount: Number(r.invoiceCount) || 0,
+        }))
+        setRows([...mine, ...participated])
+      })
+      .catch(() => {})
+      .finally(() => { if (!cancelled) setLoading(false) })
+    return () => { cancelled = true }
+  }, [])
 
   const mineRows = rows.filter((r): r is MineRow => r.tab === 'mine')
   const partRows = rows.filter((r): r is ParticipatedRow => r.tab === 'participated')
@@ -425,7 +353,14 @@ export default function ApprovalRecordsPage() {
 
       {/* 列表（卡片流，移动端友好） */}
       <div className="space-y-3">
-        {filtered.length === 0 && (
+        {loading ? (
+          <div className="rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-16 text-center shadow-sm border-dashed">
+            <div className="mx-auto w-14 h-14 rounded-2xl bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-400 mb-3">
+              <Clock4 className="w-7 h-7 animate-spin" />
+            </div>
+            <div className="text-slate-600 dark:text-slate-300 font-medium mb-1">加载审批记录...</div>
+          </div>
+        ) : filtered.length === 0 ? (
           <div className="rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-16 text-center shadow-sm border-dashed">
             <div className="mx-auto w-14 h-14 rounded-2xl bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-400 mb-3">
               <FileX2 className="w-7 h-7" />
@@ -435,7 +370,7 @@ export default function ApprovalRecordsPage() {
               试试调整筛选条件，或点击右上角「发起新报销」创建一条新单据
             </div>
           </div>
-        )}
+        ) : null}
         {filtered.map((r) => (
           <RecordCard key={r.id + r.tab} row={r} />
         ))}

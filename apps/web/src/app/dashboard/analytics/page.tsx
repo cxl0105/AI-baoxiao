@@ -29,13 +29,14 @@ import {
   Download,
   Printer,
 } from 'lucide-react'
-import { CATEGORY_LABEL, type ExpenseCategory } from '@/lib/api'
+import { api, CATEGORY_LABEL, type ExpenseCategory } from '@/lib/api'
 import { useSettingsStore } from '@/lib/settings'
 import { utilizationLevel } from '@/lib/expense-standard'
 import { useInvoiceStore } from '@/lib/invoice-store'
 
 // ---- 常量 ----
-const YEARS = [2025, 2024, 2023] as const
+const CURRENT_YEAR = new Date().getFullYear()
+const YEARS = [CURRENT_YEAR, CURRENT_YEAR - 1, CURRENT_YEAR - 2, CURRENT_YEAR - 3] as const
 const QUARTERS: Array<{ value: 'all' | 'q1' | 'q2' | 'q3' | 'q4'; label: string; months: number[] }> = [
   { value: 'all', label: '全年', months: [1,2,3,4,5,6,7,8,9,10,11,12] },
   { value: 'q1', label: 'Q1（1–3 月）', months: [1,2,3] },
@@ -317,8 +318,19 @@ export default function AnalyticsPage() {
   useEffect(() => { setMounted(true) }, [])
 
   const [tab, setTab] = useState<'trend' | 'budget' | 'anomaly'>('trend')
-  const [year, setYear] = useState<number>(2024)
+  const [year, setYear] = useState<number>(CURRENT_YEAR)
   const [quarter, setQuarter] = useState<(typeof QUARTERS)[number]['value']>('all')
+  // 后端真实聚合数据
+  const [remote, setRemote] = useState<any>(null)
+  useEffect(() => {
+    let cancelled = false
+    api
+      .getAnalytics({ year, quarter: quarter === 'all' ? undefined : quarter })
+      .then((d) => { if (!cancelled) setRemote(d) })
+      .catch(() => {})
+    return () => { cancelled = true }
+  }, [year, quarter])
+
   const [deptFilter, setDeptFilter] = useState<Set<string>>(new Set())
   const [catFilter, setCatFilter] = useState<Set<string>>(new Set())
   // PDF 报告导出：printing=true 时渲染专用打印布局
@@ -331,9 +343,38 @@ export default function AnalyticsPage() {
   // --- 发票数据（用于异常预警） ---
   const invoices = useInvoiceStore((s) => s.invoices)
 
-  const monthly = useMemo(() => makeMonthly(year), [year])
-  const depts = useMemo(() => makeDept(year), [year])
-  const cats = useMemo(() => makeCat(year), [year])
+  const monthly = useMemo<MonthlyStat[]>(() => {
+    if (remote?.monthlyTrend?.length) {
+      return remote.monthlyTrend.map((m: any) => ({
+        month: (m.month as Month) || 1,
+        amount: Number(m.amount) || 0,
+        count: 0,
+        lastYearAmount: 0,
+      }))
+    }
+    return makeMonthly(year)
+  }, [remote, year])
+  const depts = useMemo<DeptStat[]>(() => {
+    if (remote?.departmentStats?.length) {
+      return remote.departmentStats.map((d: any, i: number) => ({
+        dept: d.name || '未分配',
+        amount: Number(d.amount) || 0,
+        count: Number(d.count) || 0,
+        color: DEPT_COLORS[i % DEPT_COLORS.length],
+      }))
+    }
+    return makeDept(year)
+  }, [remote, year])
+  const cats = useMemo<CatStat[]>(() => {
+    if (remote?.categoryStats?.length) {
+      return remote.categoryStats.map((c: any) => ({
+        cat: (c.category as ExpenseCategory) || 'other',
+        amount: Number(c.amount) || 0,
+        count: Number(c.count) || 0,
+      }))
+    }
+    return makeCat(year)
+  }, [remote, year])
 
   const filteredMonths = useMemo(() => {
     const q = QUARTERS.find((q) => q.value === quarter)!
@@ -361,11 +402,37 @@ export default function AnalyticsPage() {
     [cats, catFilter]
   )
 
-  // === TOP10 费用排行（按员工 Mock） ===
-  const topEmployees = useMemo(() => makeTopEmployees(year, quarter), [year, quarter])
+  // === TOP10 费用排行（后端聚合） ===
+  const topEmployees = useMemo<TopEmployeeStat[]>(() => {
+    if (remote?.topEmployees?.length) {
+      return remote.topEmployees.map((e: any, i: number) => {
+        const amt = Number(e.amount) || 0
+        const cnt = Number(e.count) || 1
+        return {
+          rank: i + 1,
+          name: e.name || '',
+          dept: e.department || '',
+          amount: amt,
+          count: cnt,
+          avgAmount: Math.round(amt / cnt),
+          yoy: 0,
+          topCategory: 'other' as ExpenseCategory,
+          topCategoryAmount: 0,
+        }
+      })
+    }
+    return makeTopEmployees(year, quarter)
+  }, [remote, year, quarter])
 
-  // === 预算执行率汇总 ===
+  // === 预算执行率汇总（后端聚合） ===
   const budgetSummary = useMemo(() => {
+    if (remote?.budgetSummary?.length) {
+      const totalBudget = remote.budgetSummary.reduce((s: number, b: any) => s + (Number(b.amount) || 0), 0)
+      const totalUsed = remote.budgetSummary.reduce((s: number, b: any) => s + (Number(b.usedAmount) || 0), 0)
+      const totalRemaining = totalBudget - totalUsed
+      const overallRate = totalBudget > 0 ? totalUsed / totalBudget : 0
+      return { totalBudget, totalUsed, totalRemaining, overallRate }
+    }
     if (!budgetControl?.enabled) return null
     const deps = budgetControl.departmentBudgets || []
     const projs = budgetControl.projectBudgets || []
@@ -374,10 +441,27 @@ export default function AnalyticsPage() {
     const totalRemaining = totalBudget - totalUsed
     const overallRate = totalBudget > 0 ? totalUsed / totalBudget : 0
     return { totalBudget, totalUsed, totalRemaining, overallRate }
-  }, [budgetControl])
+  }, [remote, budgetControl])
 
-  // === 异常预警列表 ===
-  const anomalies = useMemo(() => buildAnomalies(invoices, depts, budgetControl, year), [invoices, depts, budgetControl, year])
+  // === 异常预警列表（后端真实规则） ===
+  const anomalies = useMemo<AnomalyItem[]>(() => {
+    if (remote?.anomalies) {
+      return remote.anomalies.map((a: any) => {
+        const type: AnomalyType = a.type === 'high_amount' ? 'large_amount' : 'over_standard'
+        return {
+          id: a.id || String(Math.random()),
+          type,
+          level: (a.type === 'high_amount' ? 'high' : 'medium') as 'high' | 'medium' | 'low',
+          title: a.title || '',
+          detail: a.reason || '',
+          amount: Number(a.amount) || undefined,
+          source: a.submitter || a.department || a.code || '',
+          occurredAt: '',
+        }
+      })
+    }
+    return buildAnomalies(invoices, depts, budgetControl, year)
+  }, [remote, invoices, depts, budgetControl, year])
 
   // === PDF 导出 ===
   // 打印结束后重置 printing 状态（兼容 beforeprint/afterprint 事件）

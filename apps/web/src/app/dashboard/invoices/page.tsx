@@ -1,18 +1,18 @@
 'use client'
 
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useCallback } from 'react'
 import {
   FileText, Search, Filter, ShieldCheck, ShieldAlert, Plus, Download,
   CheckCircle2, XCircle, Clock, AlertTriangle, Eye, Trash2, X,
   Wallet, Stamp, ShieldQuestion, Send, Link2
 } from 'lucide-react'
-import { useInvoiceStore,
+import {
   INVOICE_TYPE_LABEL, INVOICE_TYPE_OPTIONS,
   INVOICE_STATUS_LABEL, INVOICE_STATUS_CLASS,
   VERIFY_STATUS_LABEL, VERIFY_STATUS_CLASS,
-  mockVerifyInvoice,
   type InvoiceRecord, type InvoiceType, type InvoiceStatus, type VerifyStatus, type VerifyDetails
 } from '@/lib/invoice-store'
+import { api } from '@/lib/api'
 import { useAuthStore } from '@/lib/auth'
 import { hasPermission, ROLES, type Role } from '@/lib/rbac'
 
@@ -112,11 +112,20 @@ const EMPTY_FORM: ManualForm = {
 // ============ 主组件 ============
 export default function InvoicesPage() {
   const { user } = useAuthStore()
-  const invoices = useInvoiceStore((s) => s.invoices)
-  const addInvoice = useInvoiceStore((s) => s.addInvoice)
-  const markAsVoid = useInvoiceStore((s) => s.markAsVoid)
-  const setVerifyStatus = useInvoiceStore((s) => s.setVerifyStatus)
-  const setVerifyDetails = useInvoiceStore((s) => s.setVerifyDetails)
+  const [invoices, setInvoices] = useState<InvoiceRecord[]>([])
+  const [listLoading, setListLoading] = useState(true)
+
+  const reload = useCallback(async () => {
+    try {
+      const d = await api.getInvoices()
+      setInvoices((d.list || []) as InvoiceRecord[])
+    } catch {
+      setInvoices([])
+    } finally {
+      setListLoading(false)
+    }
+  }, [])
+  useEffect(() => { reload() }, [reload])
 
   const [mounted, setMounted] = useState(false)
   useEffect(() => { setMounted(true) }, [])
@@ -218,35 +227,31 @@ export default function InvoicesPage() {
 
   // ============ 单行操作 ============
   const handleVerify = async (id: string) => {
-    const invoice = invoices.find((i) => i.id === id)
-    if (!invoice) return
-    // 设置验真中状态
     setVerifyingIds((prev) => new Set(prev).add(id))
-    setVerifyStatus(id, 'verifying')
     try {
-      const details = await mockVerifyInvoice(invoice)
-      setVerifyDetails(id, details)
-      if (details.conclusion === 'inconsistent') {
-        setVerifyStatus(id, 'failed')
-      } else {
-        setVerifyStatus(id, 'verified')
-      }
-      // 若详情弹窗打开，同步更新
+      const res = await api.verifyInvoice(id)
+      const details = res.verifyDetails as VerifyDetails
+      const status: VerifyStatus = res.verifyStatus === 'failed' ? 'failed' : 'verified'
+      const ts = new Date().toISOString()
+      setInvoices((prev) => prev.map((i) => (i.id === id ? { ...i, verifyStatus: status, verifiedAt: ts, verifyDetails: details } : i)))
       setDetailInvoice((cur) =>
-        cur && cur.id === id
-          ? { ...cur, verifyStatus: details.conclusion === 'inconsistent' ? 'failed' : 'verified', verifiedAt: new Date().toISOString(), verifyDetails: details }
-          : cur
+        cur && cur.id === id ? { ...cur, verifyStatus: status, verifiedAt: ts, verifyDetails: details } : cur
       )
     } catch {
-      setVerifyStatus(id, 'failed')
+      setInvoices((prev) => prev.map((i) => (i.id === id ? { ...i, verifyStatus: 'failed' } : i)))
     } finally {
       setVerifyingIds((prev) => { const n = new Set(prev); n.delete(id); return n })
     }
   }
-  const handleVoid = (id: string) => {
+  const handleVoid = async (id: string) => {
     if (!confirm('确定作废此发票？作废后该发票将不可用于报销。')) return
-    markAsVoid(id)
-    setDetailInvoice((cur) => (cur && cur.id === id ? { ...cur, status: 'void' } : cur))
+    try {
+      await api.voidInvoice(id)
+      setInvoices((prev) => prev.map((i) => (i.id === id ? { ...i, status: 'void' as InvoiceStatus } : i)))
+      setDetailInvoice((cur) => (cur && cur.id === id ? { ...cur, status: 'void' as InvoiceStatus } : cur))
+    } catch (e) {
+      alert(e instanceof Error ? e.message : String(e))
+    }
   }
 
   // ============ 批量操作 ============
@@ -254,20 +259,17 @@ export default function InvoicesPage() {
     const ids = Array.from(selected)
     if (!ids.length) return
     if (!confirm(`确认为选中的 ${ids.length} 张发票执行验真？`)) return
-    // 批量设置验真中
     setVerifyingIds((prev) => { const n = new Set(prev); ids.forEach((id) => n.add(id)); return n })
-    ids.forEach((id) => setVerifyStatus(id, 'verifying'))
-    // 并行验真
     await Promise.all(
       ids.map(async (id) => {
-        const invoice = invoices.find((i) => i.id === id)
-        if (!invoice) return
         try {
-          const details = await mockVerifyInvoice(invoice)
-          setVerifyDetails(id, details)
-          setVerifyStatus(id, details.conclusion === 'inconsistent' ? 'failed' : 'verified')
+          const res = await api.verifyInvoice(id)
+          const details = res.verifyDetails as VerifyDetails
+          const status: VerifyStatus = res.verifyStatus === 'failed' ? 'failed' : 'verified'
+          const ts = new Date().toISOString()
+          setInvoices((prev) => prev.map((i) => (i.id === id ? { ...i, verifyStatus: status, verifiedAt: ts, verifyDetails: details } : i)))
         } catch {
-          setVerifyStatus(id, 'failed')
+          setInvoices((prev) => prev.map((i) => (i.id === id ? { ...i, verifyStatus: 'failed' } : i)))
         } finally {
           setVerifyingIds((prev) => { const n = new Set(prev); n.delete(id); return n })
         }
@@ -275,11 +277,12 @@ export default function InvoicesPage() {
     )
     clearSelection()
   }
-  const handleBulkVoid = () => {
+  const handleBulkVoid = async () => {
     const ids = Array.from(selected)
     if (!ids.length) return
     if (!confirm(`确定作废选中的 ${ids.length} 张发票？`)) return
-    ids.forEach((id) => markAsVoid(id))
+    await Promise.all(ids.map((id) => api.voidInvoice(id).catch(() => {})))
+    setInvoices((prev) => prev.map((i) => (ids.includes(i.id) ? { ...i, status: 'void' as InvoiceStatus } : i)))
     clearSelection()
   }
   const handleBulkExport = () => {
@@ -300,7 +303,7 @@ export default function InvoicesPage() {
     setDupInvoice(null)
     setShowManual(true)
   }
-  const handleManualSubmit = () => {
+  const handleManualSubmit = async () => {
     setFormError(null)
     setDupInvoice(null)
     if (!form.invoiceCode.trim() || !form.invoiceNumber.trim()) {
@@ -314,7 +317,6 @@ export default function InvoicesPage() {
     }
     let taxNum: number
     if (form.taxAmount.trim() === '') {
-      // 留空自动按 6% 税率计算（amount 为价税合计）
       taxNum = +(amountNum * 0.06 / 1.06).toFixed(2)
     } else {
       taxNum = parseFloat(form.taxAmount)
@@ -324,28 +326,32 @@ export default function InvoicesPage() {
       }
     }
     const withoutTax = +(amountNum - taxNum).toFixed(2)
-    const result = addInvoice({
-      invoiceCode: form.invoiceCode.trim(),
-      invoiceNumber: form.invoiceNumber.trim(),
-      type: form.type,
-      date: form.date,
-      amount: amountNum,
-      taxAmount: taxNum,
-      amountWithoutTax: withoutTax,
-      sellerName: form.sellerName.trim(),
-      sellerTaxId: form.sellerTaxId.trim(),
-      buyerName: '智报销科技有限公司',
-      description: form.description.trim(),
-      status: 'unused',
-      verifyStatus: 'unverified',
-      source: 'manual',
-      remark: form.remark.trim() || undefined,
-    })
-    if (!result.success && result.duplicate) {
-      setDupInvoice(result.duplicate)
+    // 前端查重（后端也会在验真时查重）
+    const dup = invoices.find(
+      (i) => i.invoiceCode === form.invoiceCode.trim() && i.invoiceNumber === form.invoiceNumber.trim() && i.status !== 'void'
+    )
+    if (dup) {
+      setDupInvoice(dup)
       return
     }
-    setShowManual(false)
+    try {
+      await api.createInvoice({
+        invoiceCode: form.invoiceCode.trim(),
+        invoiceNumber: form.invoiceNumber.trim(),
+        invoiceType: form.type,
+        amount: amountNum,
+        taxAmount: taxNum,
+        date: form.date,
+        sellerName: form.sellerName.trim(),
+        sellerTaxId: form.sellerTaxId.trim(),
+        buyerName: '智报销科技有限公司',
+        description: form.description.trim(),
+      })
+      setShowManual(false)
+      await reload()
+    } catch (e) {
+      setFormError(e instanceof Error ? e.message : String(e))
+    }
   }
 
   const resetFilters = () => {
