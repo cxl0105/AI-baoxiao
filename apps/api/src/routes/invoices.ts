@@ -73,9 +73,20 @@ function verifyInvoice(inv: any): any {
 
 // GET /api/v1/invoices — 发票池列表（含报销单标题）
 inv.get('/', async (c) => {
+  const me = currentUser(c)
   const { verifyStatus = '', keyword = '' } = c.req.query()
-  let rows = await db.select().from(invoices).orderBy(desc(invoices.createdAt))
-  if (verifyStatus) rows = rows.filter((r) => r.verifyStatus === verifyStatus)
+  let allRows = await db.select().from(invoices).orderBy(desc(invoices.createdAt))
+  if (verifyStatus) allRows = allRows.filter((r) => r.verifyStatus === verifyStatus)
+  // 多租户隔离：发票通过 ocrData.companyId 或关联的本公司报销单归属
+  const myReimbIds = new Set(
+    (await db.select({ id: reimbursements.id }).from(reimbursements).where(eq(reimbursements.companyId, me.companyId))).map((x) => x.id)
+  )
+  const rows = allRows.filter((r) => {
+    const ocrCompany = (r.ocrData as any)?.companyId
+    if (ocrCompany && ocrCompany === me.companyId) return true
+    if (r.reimbursementId && myReimbIds.has(r.reimbursementId)) return true
+    return false
+  })
 
   const reimbIds = [...new Set(rows.map((r) => r.reimbursementId).filter(Boolean) as string[])]
   const reimbRows = reimbIds.length
@@ -149,8 +160,10 @@ inv.post(
     if (!result.success) return c.json({ code: 'VALIDATION_ERROR', message: '参数验证失败', errors: result.error.flatten() }, 400)
   }),
   async (c) => {
+    const me = currentUser(c)
     const data = c.req.valid('json')
     const ocrData = {
+      companyId: me.companyId,
       date: data.date || '',
       taxAmount: data.taxAmount || 0,
       amount: data.amount || 0,
@@ -181,16 +194,21 @@ inv.post(
 
 // POST /api/v1/invoices/:id/verify — 验真
 inv.post('/:id/verify', async (c) => {
+  const me = currentUser(c)
   const id = c.req.param('id')
   const [r] = await db.select().from(invoices).where(eq(invoices.id, id)).limit(1)
   if (!r) return c.json({ code: 'NOT_FOUND', message: '发票不存在' }, 404)
   const ocr = (r.ocrData || {}) as any
+  if ((ocr as any)?.companyId && (ocr as any).companyId !== me.companyId) {
+    return c.json({ code: 'FORBIDDEN', message: '无权操作' }, 403)
+  }
 
   // 查重：同发票号是否已被其他发票使用
   let duplicate = false
   if (r.invoiceNo) {
-    const dup = await db.select().from(invoices).where(eq(invoices.invoiceNo, r.invoiceNo))
-    duplicate = dup.length > 1
+    const dupRows = await db.select().from(invoices).where(eq(invoices.invoiceNo, r.invoiceNo))
+    // 只在本公司内查重
+    duplicate = dupRows.filter((x) => ((x.ocrData as any)?.companyId || '') === me.companyId).length > 1
   }
 
   const payload = {
@@ -217,10 +235,14 @@ inv.post('/:id/verify', async (c) => {
 
 // POST /api/v1/invoices/:id/void — 作废
 inv.post('/:id/void', async (c) => {
+  const me = currentUser(c)
   const id = c.req.param('id')
   const [r] = await db.select().from(invoices).where(eq(invoices.id, id)).limit(1)
   if (!r) return c.json({ code: 'NOT_FOUND', message: '发票不存在' }, 404)
   const ocr = (r.ocrData || {}) as any
+  if ((ocr as any)?.companyId && (ocr as any).companyId !== me.companyId) {
+    return c.json({ code: 'FORBIDDEN', message: '无权操作' }, 403)
+  }
   const nextOcr = { ...ocr, status: 'void' }
   await db.update(invoices).set({ ocrData: nextOcr }).where(eq(invoices.id, id))
   return c.json({ code: 'SUCCESS', message: '已作废' })
@@ -228,11 +250,15 @@ inv.post('/:id/void', async (c) => {
 
 // PATCH /api/v1/invoices/:id — 关联报销单（标记已使用）
 inv.patch('/:id', async (c) => {
+  const me = currentUser(c)
   const id = c.req.param('id')
   const body = await c.req.json().catch(() => ({}))
   const [r] = await db.select().from(invoices).where(eq(invoices.id, id)).limit(1)
   if (!r) return c.json({ code: 'NOT_FOUND', message: '发票不存在' }, 404)
   const ocr = (r.ocrData || {}) as any
+  if ((ocr as any)?.companyId && (ocr as any).companyId !== me.companyId) {
+    return c.json({ code: 'FORBIDDEN', message: '无权操作' }, 403)
+  }
   const nextOcr: any = { ...ocr }
   if (body.status) nextOcr.status = body.status
   if (body.reimbursementId !== undefined) nextOcr.reimbursementId = body.reimbursementId

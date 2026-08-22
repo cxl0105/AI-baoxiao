@@ -10,7 +10,7 @@ import {
   index,
 } from 'drizzle-orm/pg-core'
 
-export const userRole = pgEnum('user_role', ['admin', 'finance', 'employee'])
+export const userRole = pgEnum('user_role', ['admin', 'gm', 'finance', 'manager', 'employee'])
 
 export const reimbursementStatus = pgEnum('reimbursement_status', [
   'draft',
@@ -22,11 +22,24 @@ export const reimbursementStatus = pgEnum('reimbursement_status', [
 ])
 
 // 公司（租户）
-export const companies = pgTable('companies', {
-  id: uuid('id').defaultRandom().primaryKey(),
-  name: text('name').notNull(),
-  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
-})
+export const companies = pgTable(
+  'companies',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    name: text('name').notNull(),
+    taxNo: text('tax_no'),
+    fullName: text('full_name'),
+    industry: text('industry'),
+    scale: text('scale'),
+    address: text('address'),
+    creditCode: text('credit_code'),
+    contactPhone: text('contact_phone'),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => ({
+    taxNoIdx: index('companies_tax_no_idx').on(t.taxNo),
+  })
+)
 
 // 用户
 export const users = pgTable(

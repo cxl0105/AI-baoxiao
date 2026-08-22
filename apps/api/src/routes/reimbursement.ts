@@ -4,7 +4,7 @@ import { zValidator } from '@hono/zod-validator'
 import { eq, desc, inArray } from 'drizzle-orm'
 import { db } from '../db'
 import { reimbursements, reimbursementItems, invoices, approvalSteps, users } from '../db/schema'
-import { authMiddleware, currentUser, isAdminOrFinance } from '../lib/auth'
+import { authMiddleware, currentUser, isAdminOrFinance, isApprover, canPay } from '../lib/auth'
 
 const reimb = new Hono()
 reimb.use('*', authMiddleware)
@@ -12,10 +12,10 @@ reimb.use('*', authMiddleware)
 const num = (v: any): number => Number(v)
 
 // --- 编号生成 ---
-async function genCode(): Promise<string> {
+async function genCode(companyId: string): Promise<string> {
   const d = new Date()
   const ymd = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`
-  const rows = await db.select({ id: reimbursements.id }).from(reimbursements)
+  const rows = await db.select({ id: reimbursements.id }).from(reimbursements).where(eq(reimbursements.companyId, companyId))
   const seq = String(rows.length + 1).padStart(4, '0')
   return `BX-${ymd}-${seq}`
 }
@@ -52,6 +52,8 @@ reimb.get('/', async (c) => {
   const ps = Math.min(200, Math.max(1, Number(pageSize) || 50))
 
   let q = db.select().from(reimbursements)
+  // 多租户隔离：只查本公司
+  q = q.where(eq(reimbursements.companyId, me.companyId)) as any
   if (status) q = q.where(eq(reimbursements.status, status as any)) as any
   if (type) q = q.where(eq(reimbursements.type, type)) as any
   if (!isAdminOrFinance(me.role)) {
@@ -114,7 +116,7 @@ reimb.post(
   async (c) => {
     const me = currentUser(c)
     const data = c.req.valid('json')
-    const code = await genCode()
+    const code = await genCode(me.companyId)
     const items = data.items || []
     const amount = data.totalAmount ?? items.reduce((s, it) => s + (it.amount || 0), 0)
     const status = data.submit ? 'pending' : 'draft'
@@ -123,6 +125,7 @@ reimb.post(
       .insert(reimbursements)
       .values({
         userId: me.sub,
+        companyId: me.companyId,
         code,
         title: data.title,
         type: data.type || 'daily',
@@ -166,6 +169,9 @@ reimb.get('/:id', async (c) => {
   const rows = await db.select().from(reimbursements).where(eq(reimbursements.id, id)).limit(1)
   const r = rows[0]
   if (!r) return c.json({ code: 'NOT_FOUND', message: '报销单不存在' }, 404)
+  if (r.companyId !== me.companyId) {
+    return c.json({ code: 'FORBIDDEN', message: '无权查看该报销单' }, 403)
+  }
   if (!isAdminOrFinance(me.role) && r.userId !== me.sub) {
     return c.json({ code: 'FORBIDDEN', message: '无权查看该报销单' }, 403)
   }
@@ -234,6 +240,7 @@ async function transition(c: any, id: string, action: string, comment?: string) 
   const rows = await db.select().from(reimbursements).where(eq(reimbursements.id, id)).limit(1)
   const r = rows[0]
   if (!r) return c.json({ code: 'NOT_FOUND', message: '报销单不存在' }, 404)
+  if (r.companyId !== me.companyId) return c.json({ code: 'FORBIDDEN', message: '无权操作' }, 403)
 
   const statusMap: Record<string, string> = {
     submit: 'pending',
@@ -277,13 +284,13 @@ reimb.post('/:id/submit', async (c) => {
 
 reimb.post('/:id/approve', async (c) => {
   const me = currentUser(c)
-  if (!isAdminOrFinance(me.role)) return c.json({ code: 'FORBIDDEN', message: '无审批权限' }, 403)
+  if (!isApprover(me.role)) return c.json({ code: 'FORBIDDEN', message: '无审批权限' }, 403)
   return transition(c, c.req.param('id'), 'approve')
 })
 
 reimb.post('/:id/reject', async (c) => {
   const me = currentUser(c)
-  if (!isAdminOrFinance(me.role)) return c.json({ code: 'FORBIDDEN', message: '无审批权限' }, 403)
+  if (!isApprover(me.role)) return c.json({ code: 'FORBIDDEN', message: '无审批权限' }, 403)
   const body = await c.req.json().catch(() => ({}))
   return transition(c, c.req.param('id'), 'reject', body.reason || body.comment || '未填写原因')
 })
@@ -300,7 +307,7 @@ reimb.post('/:id/revoke', async (c) => {
 
 reimb.post('/:id/pay', async (c) => {
   const me = currentUser(c)
-  if (!isAdminOrFinance(me.role)) return c.json({ code: 'FORBIDDEN', message: '无付款权限' }, 403)
+  if (!canPay(me.role)) return c.json({ code: 'FORBIDDEN', message: '无付款权限' }, 403)
   return transition(c, c.req.param('id'), 'pay')
 })
 

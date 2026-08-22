@@ -12,6 +12,7 @@ import {
   Lock,
   User,
   Building2,
+  Fingerprint,
   Phone,
   Eye,
   EyeOff,
@@ -37,6 +38,7 @@ const registerSchema = z
       .optional()
       .default(''),
     companyName: z.string().min(2, '企业名称至少 2 个字符').max(100, '企业名称最多 100 个字符'),
+    taxNo: z.string().min(1, '请输入企业纳税号').max(32, '纳税号过长'),
     password: z
       .string()
       .min(1, '请输入密码')
@@ -75,6 +77,7 @@ export default function RegisterPage() {
       phone: '',
       email: '',
       companyName: '',
+      taxNo: '',
       password: '',
       confirmPassword: '',
       agree: false as unknown as true,
@@ -106,6 +109,7 @@ export default function RegisterPage() {
         email: data.email || undefined,
         password: data.password,
         companyName: data.companyName,
+        taxNo: data.taxNo,
       })
       setSuccess(true)
       useSettingsStore.getState().patchCompany({ fullName: data.companyName })
@@ -238,6 +242,32 @@ export default function RegisterPage() {
                 <p className="mt-1.5 text-sm text-red-500 flex items-center gap-1">
                   <AlertCircle className="w-3.5 h-3.5" />
                   {errors.name.message}
+                </p>
+              )}
+            </div>
+
+            {/* 企业纳税号（租户键） */}
+            <div>
+              <label htmlFor="taxNo" className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">
+                企业纳税号（统一社会信用代码）
+              </label>
+              <div className="relative">
+                <Fingerprint className="absolute left-3.5 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
+                <input
+                  id="taxNo"
+                  type="text"
+                  placeholder="如：91330100MA27XXXXX"
+                  {...register('taxNo')}
+                  className={`w-full pl-11 pr-4 py-3 rounded-xl border bg-white dark:bg-slate-800 text-slate-900 dark:text-white placeholder:text-slate-400 transition-colors focus:outline-none focus:ring-2 focus:ring-brand-500/20 ${
+                    errors.taxNo ? 'border-red-300 dark:border-red-700 focus:border-red-500' : 'border-slate-200 dark:border-slate-700 focus:border-brand-500'
+                  }`}
+                />
+              </div>
+              <p className="mt-1 text-xs text-slate-400">同一纳税号的员工将自动加入同一企业；新税号将创建新企业，您将成为管理员。</p>
+              {errors.taxNo && (
+                <p className="mt-1.5 text-sm text-red-500 flex items-center gap-1">
+                  <AlertCircle className="w-3.5 h-3.5" />
+                  {errors.taxNo.message}
                 </p>
               )}
             </div>

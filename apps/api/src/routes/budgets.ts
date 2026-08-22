@@ -1,10 +1,10 @@
 import { Hono } from 'hono'
 import { z } from 'zod'
 import { zValidator } from '@hono/zod-validator'
-import { eq, desc } from 'drizzle-orm'
+import { eq, desc, and } from 'drizzle-orm'
 import { db, pool } from '../db'
 import { budgets } from '../db/schema'
-import { authMiddleware, currentUser, isAdminOrFinance } from '../lib/auth'
+import { authMiddleware, currentUser, isAdminOrFinance, canManageAllMembers } from '../lib/auth'
 
 const b = new Hono()
 b.use('*', authMiddleware)
@@ -28,20 +28,20 @@ function periodStart(period: string): Date {
 }
 
 // 计算某部门/项目在当前周期内的已用金额（已审批通过或已付款的报销单）
-async function computeUsed(kind: string, name: string, code: string | null, period: string): Promise<number> {
+async function computeUsed(kind: string, name: string, code: string | null, period: string, companyId: string): Promise<number> {
   const start = periodStart(period)
   if (kind === 'project') {
     const r = await pool.query(
       `SELECT COALESCE(SUM(amount), 0) AS amt FROM reimbursements
-       WHERE project_code = $1 AND status IN ('approved','paid') AND created_at >= $2`,
-      [code, start]
+       WHERE company_id = $3 AND project_code = $1 AND status IN ('approved','paid') AND created_at >= $2`,
+      [code, start, companyId]
     )
     return num(r.rows[0].amt)
   }
   const r = await pool.query(
     `SELECT COALESCE(SUM(amount), 0) AS amt FROM reimbursements
-     WHERE department = $1 AND status IN ('approved','paid') AND created_at >= $2`,
-    [name, start]
+     WHERE company_id = $3 AND department = $1 AND status IN ('approved','paid') AND created_at >= $2`,
+    [name, start, companyId]
   )
   return num(r.rows[0].amt)
 }
@@ -52,15 +52,15 @@ b.get('/', async (c) => {
   const { kind = '' } = c.req.query()
   let rows
   if (kind === 'department' || kind === 'project') {
-    rows = await db.select().from(budgets).where(eq(budgets.kind, kind)).orderBy(desc(budgets.createdAt))
+    rows = await db.select().from(budgets).where(and(eq(budgets.companyId, me.companyId), eq(budgets.kind, kind))).orderBy(desc(budgets.createdAt))
   } else {
-    rows = await db.select().from(budgets).orderBy(desc(budgets.createdAt))
+    rows = await db.select().from(budgets).where(eq(budgets.companyId, me.companyId)).orderBy(desc(budgets.createdAt))
   }
 
   const departmentBudgets: any[] = []
   const projectBudgets: any[] = []
   for (const r of rows) {
-    const used = await computeUsed(r.kind, r.name, r.code, r.period)
+    const used = await computeUsed(r.kind, r.name, r.code, r.period, me.companyId)
     const item = {
       id: r.id,
       kind: r.kind,
@@ -92,7 +92,8 @@ b.get('/', async (c) => {
   let control: any = { enabled: true, period: 'monthly', overBudgetAction: 'warn' }
   try {
     const s = await pool.query(
-      `SELECT policy FROM company_settings ORDER BY updated_at DESC LIMIT 1`
+      `SELECT policy FROM company_settings WHERE company_id = $1 ORDER BY updated_at DESC LIMIT 1`,
+      [me.companyId]
     )
     const policy = s.rows[0]?.policy || {}
     const bc = (policy as any)?.budgetControl
@@ -144,6 +145,7 @@ b.post(
     const [r] = await db
       .insert(budgets)
       .values({
+        companyId: me.companyId,
         kind: data.kind,
         name: data.name,
         code: data.code || null,
@@ -168,6 +170,7 @@ b.patch(
     const data = c.req.valid('json')
     const [existing] = await db.select().from(budgets).where(eq(budgets.id, id)).limit(1)
     if (!existing) return c.json({ code: 'NOT_FOUND', message: '预算项不存在' }, 404)
+    if (existing.companyId !== me.companyId) return c.json({ code: 'FORBIDDEN', message: '无权操作' }, 403)
     const upd: any = { updatedAt: new Date() }
     if (data.name !== undefined) upd.name = data.name
     if (data.code !== undefined) upd.code = data.code || null
@@ -185,6 +188,7 @@ b.delete('/:id', async (c) => {
   const id = c.req.param('id')
   const [existing] = await db.select().from(budgets).where(eq(budgets.id, id)).limit(1)
   if (!existing) return c.json({ code: 'NOT_FOUND', message: '预算项不存在' }, 404)
+  if (existing.companyId !== me.companyId) return c.json({ code: 'FORBIDDEN', message: '无权操作' }, 403)
   await db.delete(budgets).where(eq(budgets.id, id))
   return c.json({ code: 'SUCCESS' })
 })

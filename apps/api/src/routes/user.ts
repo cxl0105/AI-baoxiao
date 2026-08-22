@@ -5,7 +5,7 @@ import bcrypt from 'bcryptjs'
 import { eq, or, ilike, desc, and } from 'drizzle-orm'
 import { db } from '../db'
 import { users, companies, reimbursements } from '../db/schema'
-import { authMiddleware, currentUser, isAdminOrFinance } from '../lib/auth'
+import { authMiddleware, currentUser, isAdminOrFinance, isSuperAdmin, canManageAllMembers, isManager } from '../lib/auth'
 
 const user = new Hono()
 user.use('*', authMiddleware)
@@ -15,7 +15,7 @@ const createUserSchema = z.object({
   phone: z.string().length(11, '手机号必须为 11 位数字').regex(/^1[3-9]\d{9}$/, '手机号格式不正确'),
   email: z.string().optional().or(z.literal('')),
   password: z.string().min(6, '密码至少 6 个字符').optional(),
-  role: z.enum(['admin', 'finance', 'employee']).default('employee'),
+  role: z.enum(['admin', 'gm', 'finance', 'manager', 'employee']).default('employee'),
   department: z.string().optional(),
 })
 
@@ -38,11 +38,19 @@ user.get('/', async (c) => {
   const { keyword = '' } = c.req.query()
   let rows
   if (isAdminOrFinance(me.role)) {
-    let q = db.select().from(users)
+    // 管理员/总经理/财务：看本公司全部成员
+    let q = db.select().from(users).where(eq(users.companyId, me.companyId))
     if (keyword) {
       const k = `%${keyword}%`
       q = q.where(or(ilike(users.name, k), ilike(users.phone, k), ilike(users.email, k))) as any
     }
+    rows = await q.orderBy(desc(users.createdAt))
+  } else if (isManager(me.role)) {
+    // 部门经理：看本部门成员
+    const myRow = await db.select().from(users).where(eq(users.id, me.sub)).limit(1)
+    const myDept = myRow[0]?.department || ''
+    let q = db.select().from(users).where(eq(users.companyId, me.companyId))
+    if (myDept) q = q.where(eq(users.department, myDept)) as any
     rows = await q.orderBy(desc(users.createdAt))
   } else {
     rows = await db.select().from(users).where(eq(users.id, me.sub))
@@ -63,25 +71,31 @@ user.post(
   }),
   async (c) => {
     const me = currentUser(c)
-    if (!isAdminOrFinance(me.role)) return c.json({ code: 'FORBIDDEN', message: '无权限' }, 403)
+    // 部门经理只能创建本部门成员；管理员/财务可创建任意
+    if (!isAdminOrFinance(me.role) && !isManager(me.role)) {
+      return c.json({ code: 'FORBIDDEN', message: '无权限' }, 403)
+    }
     const data = c.req.valid('json')
+    // 部门经理创建的用户强制归入本部门、且不能设为 admin/gm/finance
+    if (isManager(me.role)) {
+      const myRow = await db.select().from(users).where(eq(users.id, me.sub)).limit(1)
+      const myDept = myRow[0]?.department || ''
+      if (data.role !== 'employee' && data.role !== 'manager') {
+        return c.json({ code: 'FORBIDDEN', message: '部门经理仅可创建普通员工或部门经理' }, 403)
+      }
+      ;(data as any).department = myDept || data.department
+    }
     const email = data.email ? data.email.toLowerCase() : null
     const conds = [eq(users.phone, data.phone)]
     if (email) conds.push(eq(users.email, email))
     const existing = await db.select().from(users).where(or(...conds)).limit(1)
     if (existing[0]) return c.json({ code: 'CONFLICT', message: '该手机号或邮箱已存在' }, 409)
 
-    let companyRows = await db.select().from(companies).limit(1)
-    let company = companyRows[0]
-    if (!company) {
-      const [cc] = await db.insert(companies).values({ name: '默认公司' }).returning()
-      company = cc
-    }
     const hash = await bcrypt.hash(data.password || '123456', 10)
     const [u] = await db
       .insert(users)
       .values({
-        companyId: company.id,
+        companyId: me.companyId,
         name: data.name,
         phone: data.phone,
         email,
@@ -105,7 +119,9 @@ user.patch(
   }),
   async (c) => {
     const me = currentUser(c)
-    if (!isAdminOrFinance(me.role)) return c.json({ code: 'FORBIDDEN', message: '无权限' }, 403)
+    if (!isAdminOrFinance(me.role) && !isManager(me.role)) {
+      return c.json({ code: 'FORBIDDEN', message: '无权限' }, 403)
+    }
 
     const id = c.req.param('id')
     const data = c.req.valid('json')
@@ -113,6 +129,21 @@ user.patch(
     const [existing] = await db.select().from(users).where(eq(users.id, id)).limit(1)
     if (!existing) {
       return c.json({ code: 'NOT_FOUND', message: '用户不存在' }, 404)
+    }
+    // 隔离：只能操作本公司成员
+    if (existing.companyId !== me.companyId) {
+      return c.json({ code: 'FORBIDDEN', message: '无权操作' }, 403)
+    }
+    // 部门经理只能操作本部门成员，且不能改角色为 admin/gm/finance
+    if (isManager(me.role)) {
+      const myRow = await db.select().from(users).where(eq(users.id, me.sub)).limit(1)
+      const myDept = myRow[0]?.department || ''
+      if (existing.department !== myDept) {
+        return c.json({ code: 'FORBIDDEN', message: '仅可操作本部门成员' }, 403)
+      }
+      if (data.role && data.role !== 'employee' && data.role !== 'manager') {
+        return c.json({ code: 'FORBIDDEN', message: '部门经理不可设置管理员/总经理/财务角色' }, 403)
+      }
     }
 
     const updateData: any = {}
@@ -133,13 +164,29 @@ user.patch(
 // 删除用户（管理员/财务）
 user.delete('/:id', async (c) => {
   const me = currentUser(c)
-  if (!isAdminOrFinance(me.role)) return c.json({ code: 'FORBIDDEN', message: '无权限' }, 403)
+  if (!isAdminOrFinance(me.role) && !isManager(me.role)) {
+    return c.json({ code: 'FORBIDDEN', message: '无权限' }, 403)
+  }
 
   const id = c.req.param('id')
 
   const [existing] = await db.select().from(users).where(eq(users.id, id)).limit(1)
   if (!existing) {
     return c.json({ code: 'NOT_FOUND', message: '用户不存在' }, 404)
+  }
+  if (existing.companyId !== me.companyId) {
+    return c.json({ code: 'FORBIDDEN', message: '无权操作' }, 403)
+  }
+  // 部门经理只能删本部门成员，且不能删管理员/财务
+  if (isManager(me.role)) {
+    const myRow = await db.select().from(users).where(eq(users.id, me.sub)).limit(1)
+    const myDept = myRow[0]?.department || ''
+    if (existing.department !== myDept) {
+      return c.json({ code: 'FORBIDDEN', message: '仅可操作本部门成员' }, 403)
+    }
+    if (existing.role === 'admin' || existing.role === 'gm' || existing.role === 'finance') {
+      return c.json({ code: 'FORBIDDEN', message: '部门经理不可删除管理员/财务' }, 403)
+    }
   }
 
   if (id === me.sub) {

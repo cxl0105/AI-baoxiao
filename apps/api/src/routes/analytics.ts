@@ -1,6 +1,6 @@
 import { Hono } from 'hono'
 import { pool } from '../db'
-import { authMiddleware, currentUser, isAdminOrFinance } from '../lib/auth'
+import { authMiddleware, currentUser } from '../lib/auth'
 
 const a = new Hono()
 a.use('*', authMiddleware)
@@ -10,17 +10,17 @@ const num = (v: any): number => Number(v || 0)
 // GET /api/v1/analytics?year=2026&quarter=all
 a.get('/', async (c) => {
   const me = currentUser(c)
+  const cid = me.companyId
   const { year = '', quarter = 'all' } = c.req.query()
-  const isApprover = isAdminOrFinance(me.role)
 
   const nowYear = String(new Date().getFullYear())
   const y = Number(year) || Number(nowYear)
   const qm: number[] = quarter === 'q1' ? [1, 2, 3] : quarter === 'q2' ? [4, 5, 6] : quarter === 'q3' ? [7, 8, 9] : quarter === 'q4' ? [10, 11, 12] : [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
 
-  // 所有条件统一用 r. 前缀，避免 JOIN users 后 created_at/status 歧义
+  // 所有条件统一用 r. 前缀 + company_id 隔离
   const dateCond = `EXTRACT(YEAR FROM r.created_at) = ${y}` +
     (quarter !== 'all' ? ` AND EXTRACT(MONTH FROM r.created_at) IN (${qm.join(',')})` : '')
-  const validCond = `r.status NOT IN ('draft','revoked') AND ${dateCond}`
+  const validCond = `r.company_id = '${cid}' AND r.status NOT IN ('draft','revoked') AND ${dateCond}`
 
   // ---- 月度趋势 ----
   const trendRes = await pool.query(
@@ -45,7 +45,7 @@ a.get('/', async (c) => {
     `SELECT ri.category AS cat, COALESCE(SUM(ri.amount),0) AS amt, COUNT(*) AS cnt
      FROM reimbursement_items ri
      JOIN reimbursements r ON r.id = ri.reimbursement_id
-     WHERE r.status NOT IN ('draft','revoked') AND EXTRACT(YEAR FROM r.created_at) = ${y}
+     WHERE r.company_id = '${cid}' AND r.status NOT IN ('draft','revoked') AND EXTRACT(YEAR FROM r.created_at) = ${y}
        ${quarter !== 'all' ? ` AND EXTRACT(MONTH FROM r.created_at) IN (${qm.join(',')})` : ''}
      GROUP BY ri.category ORDER BY amt DESC`
   )
@@ -83,7 +83,7 @@ a.get('/', async (c) => {
 
   // ---- 预算执行 ----
   const budgetRes = await pool.query(
-    `SELECT kind, name, code, amount, period FROM budgets ORDER BY kind, name`
+    `SELECT kind, name, code, amount, period FROM budgets WHERE company_id = '${cid}' ORDER BY kind, name`
   )
   const budgetSummary: any[] = []
   for (const b of budgetRes.rows) {
@@ -91,14 +91,14 @@ a.get('/', async (c) => {
     if (b.kind === 'project') {
       const r = await pool.query(
         `SELECT COALESCE(SUM(amount),0) AS amt FROM reimbursements
-         WHERE project_code = $1 AND status IN ('approved','paid') AND EXTRACT(YEAR FROM created_at) = ${y}`,
+         WHERE company_id = '${cid}' AND project_code = $1 AND status IN ('approved','paid') AND EXTRACT(YEAR FROM created_at) = ${y}`,
         [b.code]
       )
       used = num(r.rows[0].amt)
     } else {
       const r = await pool.query(
         `SELECT COALESCE(SUM(amount),0) AS amt FROM reimbursements
-         WHERE department = $1 AND status IN ('approved','paid') AND EXTRACT(YEAR FROM created_at) = ${y}`,
+         WHERE company_id = '${cid}' AND department = $1 AND status IN ('approved','paid') AND EXTRACT(YEAR FROM created_at) = ${y}`,
         [b.name]
       )
       used = num(r.rows[0].amt)

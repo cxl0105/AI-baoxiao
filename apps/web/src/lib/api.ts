@@ -236,7 +236,9 @@ export const api = {
     phone?: string
     password: string
     companyName?: string
-  }): Promise<{ userId: string; tenantId: string }> {
+    taxNo?: string
+    department?: string
+  }): Promise<{ userId: string; tenantId: string; isFirstUser?: boolean }> {
     // Mock 模式：模拟注册成功
     if (MOCK_MODE) {
       return {
@@ -437,7 +439,7 @@ export const api = {
     phone: string
     email?: string
     password?: string
-    role?: 'admin' | 'finance' | 'employee'
+    role?: 'admin' | 'gm' | 'finance' | 'manager' | 'employee'
     department?: string
   }) {
     const { data } = await instance.post<ApiResponse<any>>('/users', payload)
@@ -450,7 +452,7 @@ export const api = {
     phone: string
     email?: string
     password?: string
-    role?: 'admin' | 'finance' | 'employee'
+    role?: 'admin' | 'gm' | 'finance' | 'manager' | 'employee'
     department?: string
   }>) {
     const { data } = await instance.patch<ApiResponse<any>>(`/users/${id}`, payload)

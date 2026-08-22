@@ -36,6 +36,7 @@ function toUser(u: any) {
     phone: u.phone || '',
     role: u.role,
     department: u.department || '',
+    companyId: u.companyId || '',
   }
 }
 
@@ -52,6 +53,9 @@ const registerSchema = z.object({
   password: z.string().min(1, '请输入密码').min(8, '密码至少 8 个字符').max(64, '密码最多 64 个字符').regex(/[a-zA-Z]/, '密码需包含字母').regex(/[0-9]/, '密码需包含数字'),
   confirmPassword: z.string().optional(),
   companyName: z.string().optional(),
+  // 企业纳税号（统一社会信用代码，多租户隔离的租户键）
+  taxNo: z.string().min(1, '请输入企业纳税号（统一社会信用代码）').max(32, '纳税号过长'),
+  department: z.string().optional(),
 })
 
 // --- 登录 ---
@@ -75,7 +79,26 @@ auth.post(
     const ok = await bcrypt.compare(password, u.passwordHash)
     if (!ok) return c.json({ code: 'AUTH_FAILED', message: '账号或密码错误' }, 401)
     const token = signToken({ sub: u.id, role: u.role, name: u.name })
-    return c.json({ code: 'SUCCESS', data: { token, user: toUser(u) } })
+    // 附带企业基础信息
+    let companyInfo: any = null
+    if (u.companyId) {
+      const cRows = await db.select().from(companies).where(eq(companies.id, u.companyId)).limit(1)
+      const c0 = cRows[0]
+      if (c0) {
+        companyInfo = {
+          id: c0.id,
+          name: c0.name,
+          taxNo: c0.taxNo || '',
+          fullName: c0.fullName || c0.name || '',
+          industry: c0.industry || '',
+          scale: c0.scale || '',
+          address: c0.address || '',
+          creditCode: c0.creditCode || '',
+          contactPhone: c0.contactPhone || '',
+        }
+      }
+    }
+    return c.json({ code: 'SUCCESS', data: { token, user: toUser(u), company: companyInfo } })
   }
 )
 
@@ -99,12 +122,23 @@ auth.post(
     if (existing[0]) {
       return c.json({ code: 'CONFLICT', message: '该手机号或邮箱已注册' }, 409)
     }
-    let companyRows = await db.select().from(companies).limit(1)
+
+    // 多租户：按纳税号查企业
+    const taxNo = data.taxNo.trim().toUpperCase()
+    let companyRows = await db.select().from(companies).where(eq(companies.taxNo, taxNo)).limit(1)
     let company = companyRows[0]
+    let isFirstUser = false
     if (!company) {
-      const [cc] = await db.insert(companies).values({ name: data.companyName || '默认公司' }).returning()
+      // 企业不存在 → 创建，注册者成为该企业第一个用户（管理员）
+      const [cc] = await db.insert(companies).values({
+        name: data.companyName || '新企业',
+        taxNo,
+        fullName: data.companyName || '新企业',
+      }).returning()
       company = cc
+      isFirstUser = true
     }
+
     const hash = await bcrypt.hash(data.password, 10)
     const [u] = await db
       .insert(users)
@@ -114,11 +148,16 @@ auth.post(
         phone: data.phone,
         email,
         passwordHash: hash,
-        role: 'employee',
-        department: null,
+        // 第一个注册者 = 企业管理员；后续同号注册者 = 普通员工
+        role: isFirstUser ? 'admin' : 'employee',
+        department: data.department || null,
       })
       .returning()
-    return c.json({ code: 'SUCCESS', message: '注册成功', data: { userId: u.id, tenantId: company.id } }, 201)
+    return c.json({
+      code: 'SUCCESS',
+      message: isFirstUser ? '企业已创建，您已成为企业管理员' : '已加入企业',
+      data: { userId: u.id, tenantId: company.id, isFirstUser },
+    }, 201)
   }
 )
 

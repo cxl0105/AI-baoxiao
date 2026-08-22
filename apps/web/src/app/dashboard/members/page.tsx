@@ -24,6 +24,7 @@ import {
   BadgeCheck,
   Crown,
   UserCog,
+  Award,
 } from 'lucide-react'
 
 const DEPARTMENTS = ['研发部', '产品部', '市场部', '销售部', '财务部', '人力资源部', '运营部', '行政部'] as const
@@ -31,10 +32,12 @@ type Department = (typeof DEPARTMENTS)[number]
 
 const ROLES = [
   { value: 'employee', label: '员工', icon: UserCircle, color: 'slate' },
+  { value: 'manager', label: '部门经理', icon: UserCog, color: 'sky' },
   { value: 'finance', label: '财务', icon: BadgeCheck, color: 'emerald' },
+  { value: 'gm', label: '总经理', icon: Award, color: 'orange' },
   { value: 'admin', label: '系统管理员', icon: Crown, color: 'amber' },
 ] as const
-type MemberRole = 'admin' | 'finance' | 'employee'
+type MemberRole = 'admin' | 'gm' | 'finance' | 'manager' | 'employee'
 
 interface Member {
   id: string
@@ -123,6 +126,8 @@ function RoleBadge({ role }: { role: MemberRole }) {
     emerald: 'bg-emerald-50 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-300 border-emerald-200/60 dark:border-emerald-800/50',
     amber: 'bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-300 border-amber-200/60 dark:border-amber-800/50',
     pink: 'bg-pink-50 dark:bg-pink-900/20 text-pink-700 dark:text-pink-300 border-pink-200/60 dark:border-pink-800/50',
+    orange: 'bg-orange-50 dark:bg-orange-900/20 text-orange-700 dark:text-orange-300 border-orange-200/60 dark:border-orange-800/50',
+    sky: 'bg-sky-50 dark:bg-sky-900/20 text-sky-700 dark:text-sky-300 border-sky-200/60 dark:border-sky-800/50',
   }
   return (
     <span className={`inline-flex items-center gap-1 px-2 py-0.5 text-xs font-medium rounded-full border ${colorMap[m.color]}`}>

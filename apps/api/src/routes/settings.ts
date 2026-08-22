@@ -3,7 +3,7 @@ import { z } from 'zod'
 import { zValidator } from '@hono/zod-validator'
 import { eq, desc } from 'drizzle-orm'
 import { db } from '../db'
-import { companies, companySettings } from '../db/schema'
+import { companySettings } from '../db/schema'
 import { authMiddleware, currentUser, isAdminOrFinance } from '../lib/auth'
 
 const s = new Hono()
@@ -22,16 +22,10 @@ async function getOrCreateSettings(companyId: string) {
   return r
 }
 
-async function getCompanyId(): Promise<string> {
-  const rows = await db.select().from(companies).limit(1)
-  if (rows[0]) return rows[0].id
-  const [cc] = await db.insert(companies).values({ name: '默认公司' }).returning()
-  return cc.id
-}
-
 // GET /api/v1/settings — 返回公司信息 + 报销规则 + OCR + UI
 s.get('/', async (c) => {
-  const companyId = await getCompanyId()
+  const me = currentUser(c)
+  const companyId = me.companyId
   const row = await getOrCreateSettings(companyId)
   return c.json({
     code: 'SUCCESS',
@@ -61,7 +55,7 @@ s.put(
     const me = currentUser(c)
     if (!isAdminOrFinance(me.role)) return c.json({ code: 'FORBIDDEN', message: '无权限' }, 403)
     const data = c.req.valid('json')
-    const companyId = await getCompanyId()
+    const companyId = me.companyId
     await getOrCreateSettings(companyId)
     const upd: any = { updatedAt: new Date() }
     if (data.company !== undefined) upd.company = data.company
