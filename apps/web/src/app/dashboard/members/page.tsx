@@ -194,6 +194,7 @@ export default function MembersPage() {
 
   const [showEditor, setShowEditor] = useState(false)
   const [editing, setEditing] = useState<Partial<Member> | null>(null)
+  const [resetPwd, setResetPwd] = useState('')
 
   const filtered = useMemo(() => {
     const kw = search.trim().toLowerCase()
@@ -317,6 +318,7 @@ export default function MembersPage() {
   }
 
   const openEditor = (m?: Member) => {
+    setResetPwd('')
     setEditing(
       m ?? {
         id: '',
@@ -341,13 +343,15 @@ export default function MembersPage() {
     try {
       if (editing.id) {
         // 更新
-        await api.updateMember(editing.id, {
+        const patch: any = {
           name: editing.name,
           email: editing.email,
           phone: editing.phone,
           role: editing.role,
           department: editing.department,
-        })
+        }
+        if (resetPwd.trim()) patch.password = resetPwd.trim()
+        await api.updateMember(editing.id, patch)
       } else {
         // 创建
         await api.createMember({
@@ -654,6 +658,8 @@ export default function MembersPage() {
         <MemberEditor
           editing={editing}
           setEditing={setEditing}
+          resetPwd={resetPwd}
+          setResetPwd={setResetPwd}
           onClose={() => {
             setShowEditor(false)
             setEditing(null)
@@ -692,12 +698,14 @@ function Kpi({
 }
 
 function MemberEditor({
-  editing, setEditing, onClose, onSubmit,
+  editing, setEditing, onClose, onSubmit, resetPwd, setResetPwd,
 }: {
   editing: Partial<Member>
   setEditing: (m: Partial<Member> | null) => void
   onClose: () => void
   onSubmit: () => void
+  resetPwd: string
+  setResetPwd: (v: string) => void
 }) {
   const isNew = !editing.id
   const field = (k: keyof Member) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) =>
@@ -770,6 +778,18 @@ function MemberEditor({
                 <option value="disabled">禁用（不可登录）</option>
               </select>
             </Field>
+            {!isNew && (
+              <Field label="重置密码（留空则不变）">
+                <input
+                  type="text"
+                  className={inputCls}
+                  value={resetPwd}
+                  placeholder="输入新密码（至少 6 位）"
+                  onChange={(e) => setResetPwd(e.target.value)}
+                  autoComplete="new-password"
+                />
+              </Field>
+            )}
             <Field label="工号（选填）">
               <input className={inputCls} placeholder="如：EMP-0001" disabled defaultValue="" />
             </Field>

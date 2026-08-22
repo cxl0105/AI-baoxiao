@@ -308,6 +308,20 @@ export const api = {
     }
   },
 
+  // 忘记密码：发送验证码
+  async forgotPassword(email: string) {
+    const { data } = await instance.post<ApiResponse<any>>('/auth/forgot-password', { email })
+    if (data.code === 'SUCCESS') return data
+    // 非成功码：抛错（TOO_FREQUENT / MAIL_NOT_CONFIGURED 等）
+    throw new Error(data.message || '发送验证码失败')
+  },
+  // 忘记密码：校验验证码并重置密码
+  async resetPassword(email: string, code: string, password: string) {
+    const { data } = await instance.post<ApiResponse<any>>('/auth/reset-password', { email, code, password })
+    if (data.code === 'SUCCESS') return data
+    throw new Error(data.message || '重置密码失败')
+  },
+
   async logout(): Promise<void> {
     if (!MOCK_MODE) {
       try {
