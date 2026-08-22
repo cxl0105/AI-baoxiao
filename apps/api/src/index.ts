@@ -50,6 +50,7 @@ import { authRoutes } from './routes/auth'
 import { reimbursementRoutes } from './routes/reimbursement'
 import { userRoutes } from './routes/user'
 import { ocrRoutes } from './routes/ocr'
+import { statsRoutes } from './routes/stats'
 import { apiReference } from './routes/docs'
 
 const app = new Hono({ strict: false })
@@ -88,6 +89,7 @@ api.route('/auth', authRoutes)
 api.route('/reimbursements', reimbursementRoutes)
 api.route('/users', userRoutes)
 api.route('/ocr', ocrRoutes)
+api.route('/stats', statsRoutes)
 
 app.route('/api/v1', api)
 

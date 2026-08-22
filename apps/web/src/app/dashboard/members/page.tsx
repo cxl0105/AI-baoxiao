@@ -1,6 +1,7 @@
 'use client'
 
-import React, { useMemo, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useState } from 'react'
+import { api } from '@/lib/api'
 import {
   Users,
   Search,
@@ -30,12 +31,10 @@ type Department = (typeof DEPARTMENTS)[number]
 
 const ROLES = [
   { value: 'employee', label: '员工', icon: UserCircle, color: 'slate' },
-  { value: 'manager', label: '部门主管', icon: ShieldAlert, color: 'indigo' },
   { value: 'finance', label: '财务', icon: BadgeCheck, color: 'emerald' },
   { value: 'admin', label: '系统管理员', icon: Crown, color: 'amber' },
-  { value: 'hr', label: '人事主管', icon: UserCog, color: 'pink' },
 ] as const
-type MemberRole = (typeof ROLES)[number]['value']
+type MemberRole = 'admin' | 'finance' | 'employee'
 
 interface Member {
   id: string
@@ -102,10 +101,8 @@ function makeMockMembers(n = 24): Member[] {
     phone: `138${String(10000000 + ((i * 137 + 19) % 90_000_000)).padStart(8, '0')}`,
     department: pickFrom(DEPARTMENTS, i * 7 + 3),
     role:
-      i % 17 === 0 ? 'admin'
-      : i % 7 === 0 ? 'finance'
-      : i % 5 === 0 ? 'hr'
-      : i % 3 === 0 ? 'manager'
+      i % 7 === 0 ? 'admin'
+      : i % 3 === 0 ? 'finance'
       : 'employee',
     status: i % 11 === 0 ? 'disabled' : 'active',
     onboardDate: addDays(ANCHOR, -(30 + i * 17)),
@@ -153,7 +150,9 @@ function StatusBadge({ s }: { s: Member['status'] }) {
 
 export default function MembersPage() {
   // 惰性初始化（SSR/客户端同种子 → 字节一致 → 无 hydrate mismatch）
-  const [members, setMembers] = useState<Member[]>(() => makeMockMembers(24))
+  const [members, setMembers] = useState<Member[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
   const [search, setSearch] = useState('')
   const [dept, setDept] = useState<string>('all')
   const [role, setRole] = useState<string>('all')
@@ -161,6 +160,37 @@ export default function MembersPage() {
   const [selected, setSelected] = useState<Set<string>>(() => new Set())
   const [page, setPage] = useState(1)
   const pageSize = 10
+
+  // 加载成员列表
+  useEffect(() => {
+    const loadMembers = async () => {
+      try {
+        setLoading(true)
+        setError(null)
+        const result = await api.listMembers()
+        // 将后端返回的数据映射为前端 Member 类型
+        const mapped: Member[] = result.list.map((u: any) => ({
+          id: u.id,
+          name: u.name,
+          email: u.email || '',
+          phone: u.phone || '',
+          department: u.department || '未分配',
+          role: u.role,
+          status: u.status || 'active',
+          onboardDate: u.createdAt ? u.createdAt.slice(0, 10) : new Date().toISOString().slice(0, 10),
+          joinedAt: u.createdAt ? u.createdAt.slice(0, 10) : new Date().toISOString().slice(0, 10),
+          avatarColor: AVATAR_COLORS[Math.abs(u.id.split('').reduce((a: number, c: string) => a + c.charCodeAt(0), 0)) % AVATAR_COLORS.length],
+        }))
+        setMembers(mapped)
+      } catch (err) {
+        console.error('加载成员列表失败:', err)
+        setError(err instanceof Error ? err.message : '加载失败')
+      } finally {
+        setLoading(false)
+      }
+    }
+    loadMembers()
+  }, [])
 
   const [showEditor, setShowEditor] = useState(false)
   const [editing, setEditing] = useState<Partial<Member> | null>(null)
@@ -217,23 +247,73 @@ export default function MembersPage() {
   }
   const allOnPage = pageRows.length > 0 && pageRows.every((r) => selected.has(r.id))
 
-  const applyStatus = (target: Member['status']) => {
+  const applyStatus = async (target: Member['status']) => {
     const ids = Array.from(selected)
     if (!ids.length) return
-    setMembers((ms) => ms.map((m) => (ids.includes(m.id) ? { ...m, status: target } : m)))
-    setSelected(new Set())
+
+    try {
+      // 批量更新
+      await Promise.all(ids.map(id => api.updateMember(id, { status: target } as any)))
+      // 刷新列表
+      const result = await api.listMembers()
+      const mapped: Member[] = result.list.map((u: any) => ({
+        id: u.id,
+        name: u.name,
+        email: u.email || '',
+        phone: u.phone || '',
+        department: u.department || '未分配',
+        role: u.role,
+        status: u.status || 'active',
+        onboardDate: u.createdAt ? u.createdAt.slice(0, 10) : new Date().toISOString().slice(0, 10),
+        joinedAt: u.createdAt ? u.createdAt.slice(0, 10) : new Date().toISOString().slice(0, 10),
+        avatarColor: AVATAR_COLORS[Math.abs(u.id.split('').reduce((a: number, c: string) => a + c.charCodeAt(0), 0)) % AVATAR_COLORS.length],
+      }))
+      setMembers(mapped)
+      setSelected(new Set())
+    } catch (err) {
+      alert('更新状态失败: ' + (err instanceof Error ? err.message : String(err)))
+    }
   }
-  const removeSelected = () => {
+  const removeSelected = async () => {
     const ids = Array.from(selected)
     if (!ids.length) return
     if (!confirm(`确定删除选中的 ${ids.length} 位成员？`)) return
-    setMembers((ms) => ms.filter((m) => !ids.includes(m.id)))
-    setSelected(new Set())
+
+    try {
+      await Promise.all(ids.map(id => api.deleteMember(id)))
+      // 刷新列表
+      const result = await api.listMembers()
+      const mapped: Member[] = result.list.map((u: any) => ({
+        id: u.id,
+        name: u.name,
+        email: u.email || '',
+        phone: u.phone || '',
+        department: u.department || '未分配',
+        role: u.role,
+        status: u.status || 'active',
+        onboardDate: u.createdAt ? u.createdAt.slice(0, 10) : new Date().toISOString().slice(0, 10),
+        joinedAt: u.createdAt ? u.createdAt.slice(0, 10) : new Date().toISOString().slice(0, 10),
+        avatarColor: AVATAR_COLORS[Math.abs(u.id.split('').reduce((a: number, c: string) => a + c.charCodeAt(0), 0)) % AVATAR_COLORS.length],
+      }))
+      setMembers(mapped)
+      setSelected(new Set())
+    } catch (err) {
+      alert('删除失败: ' + (err instanceof Error ? err.message : String(err)))
+    }
   }
-  const toggleSingleStatus = (id: string) => {
-    setMembers((ms) =>
-      ms.map((m) => (m.id === id ? { ...m, status: m.status === 'active' ? 'disabled' : 'active' } : m))
-    )
+  const toggleSingleStatus = async (id: string) => {
+    const member = members.find(m => m.id === id)
+    if (!member) return
+
+    const newStatus = member.status === 'active' ? 'disabled' : 'active'
+    try {
+      await api.updateMember(id, { status: newStatus } as any)
+      setMembers((ms) =>
+        ms.map((m) => (m.id === id ? { ...m, status: newStatus } : m))
+      )
+    } catch (err) {
+      alert('更新状态失败: ' + (err instanceof Error ? err.message : String(err)))
+    }
   }
 
   const openEditor = (m?: Member) => {
@@ -251,31 +331,55 @@ export default function MembersPage() {
     )
     setShowEditor(true)
   }
-  const submitEditor = () => {
+  const submitEditor = async () => {
     if (!editing) return
-    if (!editing.name || !editing.email) {
-      alert('请至少填写 姓名 和 邮箱')
+    if (!editing.name || !editing.phone) {
+      alert('请至少填写 姓名 和 手机号')
       return
     }
-    if (editing.id) {
-      setMembers((ms) => ms.map((m) => (m.id === editing.id ? { ...m, ...(editing as Member) } : m)))
-    } else {
-      const newM: Member = {
-        id: `mem_${Date.now().toString(36)}`,
-        name: editing.name!,
-        email: editing.email!,
-        phone: editing.phone || '',
-        department: editing.department || DEPARTMENTS[0],
-        role: (editing.role as MemberRole) || 'employee',
-        status: editing.status || 'active',
-        onboardDate: editing.onboardDate || new Date().toISOString().slice(0, 10),
-        joinedAt: new Date().toISOString().slice(0, 10),
-        avatarColor: AVATAR_COLORS[Math.floor(Date.now() / 7) % AVATAR_COLORS.length],
+
+    try {
+      if (editing.id) {
+        // 更新
+        await api.updateMember(editing.id, {
+          name: editing.name,
+          email: editing.email,
+          phone: editing.phone,
+          role: editing.role,
+          department: editing.department,
+        })
+      } else {
+        // 创建
+        await api.createMember({
+          name: editing.name,
+          email: editing.email,
+          phone: editing.phone,
+          role: editing.role,
+          department: editing.department,
+          password: '123456', // 默认密码
+        })
       }
-      setMembers((ms) => [newM, ...ms])
+
+      // 刷新列表
+      const result = await api.listMembers()
+      const mapped: Member[] = result.list.map((u: any) => ({
+        id: u.id,
+        name: u.name,
+        email: u.email || '',
+        phone: u.phone || '',
+        department: u.department || '未分配',
+        role: u.role,
+        status: u.status || 'active',
+        onboardDate: u.createdAt ? u.createdAt.slice(0, 10) : new Date().toISOString().slice(0, 10),
+        joinedAt: u.createdAt ? u.createdAt.slice(0, 10) : new Date().toISOString().slice(0, 10),
+        avatarColor: AVATAR_COLORS[Math.abs(u.id.split('').reduce((a: number, c: string) => a + c.charCodeAt(0), 0)) % AVATAR_COLORS.length],
+      }))
+      setMembers(mapped)
+      setShowEditor(false)
+      setEditing(null)
+    } catch (err) {
+      alert((editing.id ? '更新' : '创建') + '失败: ' + (err instanceof Error ? err.message : String(err)))
     }
-    setShowEditor(false)
-    setEditing(null)
   }
 
   return (

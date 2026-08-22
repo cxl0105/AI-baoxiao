@@ -29,7 +29,7 @@ import {
   TYPE_LABEL,
   type ReimbursementStatus,
 } from '@/lib/reimbursements'
-import type { ExpenseCategory } from '@/lib/api'
+import { api, formatApiError, type ExpenseCategory } from '@/lib/api'
 import { useAuthStore } from '@/lib/auth'
 import { hasPermission, ROLES, type Role } from '@/lib/rbac'
 import { ShieldCheck, Lock, ShieldAlert } from 'lucide-react'
@@ -38,6 +38,20 @@ const CATEGORY_LABEL: Record<ExpenseCategory, string> = {
   travel: '差旅住宿', transport: '交通出行', meal: '餐饮',
   office: '办公用品', communication: '通讯', entertainment: '招待/客户',
   training: '培训', other: '其他',
+}
+
+const fmtDateTime = (iso?: string) => {
+  if (!iso) return ''
+  const d = new Date(iso)
+  if (isNaN(d.getTime())) return String(iso)
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
+const isUrgent = (iso?: string) => {
+  if (!iso) return false
+  const t = new Date(iso).getTime()
+  if (isNaN(t)) return false
+  return Date.now() - t > 48 * 3600 * 1000
 }
 
 type ApprovalSort = 'time' | 'amount' | 'step'
@@ -55,8 +69,34 @@ export default function PendingApprovalPage() {
   const role = (user?.role as Role) || 'employee'
   const roleInfo = ROLES[role] || ROLES.employee
   const submittedList = useSubmittedStore((s) => s.list)
+  const [apiList, setApiList] = useState<any[]>([])
+  useEffect(() => {
+    if (!mounted) return
+    let cancelled = false
+    api
+      .listReimbursements({ status: 'pending', pageSize: 200 })
+      .then((res) => { if (!cancelled) setApiList(res.list || []) })
+      .catch(() => {})
+    return () => { cancelled = true }
+  }, [mounted])
+
+  const refreshList = async () => {
+    try {
+      const res = await api.listReimbursements({ status: 'pending', pageSize: 200 })
+      setApiList(res.list || [])
+    } catch {
+      /* ignore */
+    }
+  }
+
   const all = useMemo(() => {
-    const mock = generatePendingApproval(32)
+    const apiRows = apiList.map((r) => ({
+      ...r,
+      submittedAt: fmtDateTime(r.createdAt),
+      urgent: isUrgent(r.createdAt),
+      currentStep: 1,
+      totalSteps: 3,
+    }))
     const submitted = submittedList
       .filter((x) => x.status === 'pending')
       .map((x) => ({
@@ -66,8 +106,10 @@ export default function PendingApprovalPage() {
         currentStep: 1,
         totalSteps: 3,
       }))
-    return [...submitted, ...mock]
-  }, [submittedList])
+    const merged = [...submitted, ...apiRows]
+    const seen = new Set<string>()
+    return merged.filter((r) => (seen.has(r.id) ? false : (seen.add(r.id), true)))
+  }, [submittedList, apiList])
 
   // --- 权限拦截：员工无权访问审批页 ---
   const canViewApprovals = hasPermission(role, 'approval:view')
@@ -149,31 +191,55 @@ export default function PendingApprovalPage() {
   }
   const singleApprove = (row: PendingRow) => {
     setSelection((s) => new Set(s).add(row.id))
-    void batchApprove([row.id], row)
+    void batchApprove([row.id])
   }
-  const batchApprove = async (ids: string[] = Array.from(selection), example?: PendingRow) => {
+  const batchApprove = async (ids: string[] = Array.from(selection)) => {
     if (!ids.length) { showToast('请先勾选要批量同意的报销单'); return }
     setBusy('batch-approve')
-    await new Promise((r) => setTimeout(r, 900))
-    setBusy(null)
-    setSelection(new Set())
-    showToast(`已批量同意 ${ids.length} 张报销单${example ? `（示例：${example.code}）` : ''}`)
+    try {
+      await Promise.all(ids.map((id) => api.approveReimbursement(id)))
+      showToast(`已同意 ${ids.length} 张报销单`)
+      setSelection(new Set())
+      await refreshList()
+    } catch (e) {
+      showToast('审批失败：' + formatApiError(e))
+    } finally {
+      setBusy(null)
+    }
   }
   const batchReject = async () => {
     if (!selection.size) { showToast('请先勾选要批量驳回的报销单'); return }
     if (!rejectReason.trim()) { showToast('请先填写驳回原因'); return }
     setBusy('batch-reject')
-    await new Promise((r) => setTimeout(r, 900))
-    setBusy(null)
-    showToast(`已批量驳回 ${selection.size} 张报销单：${rejectReason.trim()}`)
-    setSelection(new Set())
-    setRejectReason('')
+    try {
+      await Promise.all(Array.from(selection).map((id) => api.rejectReimbursement(id, rejectReason.trim())))
+      showToast(`已驳回 ${selection.size} 张报销单：${rejectReason.trim()}`)
+      setSelection(new Set())
+      setRejectReason('')
+      await refreshList()
+    } catch (e) {
+      showToast('驳回失败：' + formatApiError(e))
+    } finally {
+      setBusy(null)
+      setSingleRejectId(null)
+    }
   }
-  const singleRejectConfirm = () => {
+  const singleRejectConfirm = async () => {
     if (!rejectReason.trim()) { showToast('请先填写驳回原因'); return }
-    setSingleRejectId(null)
-    showToast(`已驳回：${rejectReason.trim()}`)
-    setRejectReason('')
+    const id = singleRejectId
+    if (!id || id === '__batch__') return
+    setBusy('batch-reject')
+    try {
+      await api.rejectReimbursement(id, rejectReason.trim())
+      setSingleRejectId(null)
+      setRejectReason('')
+      showToast('已驳回')
+      await refreshList()
+    } catch (e) {
+      showToast('驳回失败：' + formatApiError(e))
+    } finally {
+      setBusy(null)
+    }
   }
   const confirmDelegate = async () => {
     if (!delegateTo) { showToast('请选择要转交的审批人'); return }

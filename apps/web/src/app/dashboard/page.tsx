@@ -21,43 +21,31 @@ import {
   Send,
 } from 'lucide-react'
 import { useAuthStore } from '@/lib/auth'
+import { api } from '@/lib/api'
 import { hasPermission, ROLES, type Role } from '@/lib/rbac'
 
-// ============ Mock 数据 ============
+// ============ 数据形状（来自 /api/v1/stats 的映射） ============
 
-// 员工视角数据：个人最近报销
-const employeeRecent = [
-  { id: 'R20240008', title: '6月北京出差报销', type: '差旅报销', amount: 3580.5, status: 'pending', date: '2024-06-15' },
-  { id: 'R20240007', title: '办公用品采购', type: '采购报销', amount: 890.0, status: 'approved', date: '2024-06-12' },
-  { id: 'R20240006', title: '客户招待费用', type: '日常费用', amount: 1280.0, status: 'rejected', date: '2024-06-10' },
-  { id: 'R20240005', title: '5月团队建设费用', type: '日常费用', amount: 3200.0, status: 'paid', date: '2024-06-05' },
-]
+interface RecentItem {
+  id: string
+  title: string
+  type: string
+  amount: number
+  status: string
+  date: string
+}
 
-// 财务/管理员视角：待审批列表
-const pendingApprovals = [
-  { id: 'R20240009', title: '市场部广告投放费用', applicant: '王五', department: '市场部', amount: 15600.0, submittedAt: '2 小时前', urgent: true, step: 2, totalSteps: 3 },
-  { id: 'R20240010', title: '研发部设备采购', applicant: '赵六', department: '研发部', amount: 8800.0, submittedAt: '5 小时前', urgent: false, step: 1, totalSteps: 3 },
-  { id: 'R20240011', title: '6月差旅报销', applicant: '钱七', department: '销售部', amount: 2350.0, submittedAt: '1 天前', urgent: false, step: 3, totalSteps: 3 },
-  { id: 'R20240012', title: '客户招待费用', applicant: '孙八', department: '市场部', amount: 1680.0, submittedAt: '1 天前', urgent: false, step: 1, totalSteps: 2 },
-]
-
-// 月度费用趋势
-const monthlyData = [
-  { month: '1月', amount: 8200 },
-  { month: '2月', amount: 6800 },
-  { month: '3月', amount: 11500 },
-  { month: '4月', amount: 9300 },
-  { month: '5月', amount: 12400 },
-  { month: '6月', amount: 12860 },
-]
-
-// 部门统计（管理员视角）
-const departmentStats = [
-  { name: '研发部', amount: 45800, count: 18, color: 'bg-brand-500' },
-  { name: '市场部', amount: 38200, count: 15, color: 'bg-emerald-500' },
-  { name: '销售部', amount: 32500, count: 12, color: 'bg-amber-500' },
-  { name: '行政部', amount: 12300, count: 6, color: 'bg-sky-500' },
-]
+interface PendingItem {
+  id: string
+  title: string
+  applicant: string
+  department: string
+  amount: number
+  submittedAt: string
+  urgent: boolean
+  step: number
+  totalSteps: number
+}
 
 const statusConfig: Record<string, { label: string; class: string }> = {
   draft: { label: '草稿', class: 'bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-300' },
@@ -67,12 +55,54 @@ const statusConfig: Record<string, { label: string; class: string }> = {
   paid: { label: '已付款', class: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400' },
 }
 
-const maxAmount = Math.max(...monthlyData.map((d) => d.amount))
+const DEPT_COLORS = [
+  'bg-brand-500',
+  'bg-emerald-500',
+  'bg-amber-500',
+  'bg-sky-500',
+  'bg-violet-500',
+  'bg-rose-500',
+]
+
+const fmtMoney = (v: number | undefined) =>
+  (Number(v) || 0).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+
+const fmtDate = (iso?: string) => {
+  if (!iso) return ''
+  const d = new Date(iso)
+  if (isNaN(d.getTime())) return ''
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
+const fmtRelative = (iso?: string) => {
+  if (!iso) return ''
+  const t = new Date(iso).getTime()
+  if (isNaN(t)) return ''
+  const diff = Date.now() - t
+  const min = Math.floor(diff / 60000)
+  if (min < 60) return min <= 1 ? '刚刚' : `${min} 分钟前`
+  const hr = Math.floor(min / 60)
+  if (hr < 24) return `${hr} 小时前`
+  const day = Math.floor(hr / 24)
+  if (day < 30) return `${day} 天前`
+  return fmtDate(iso)
+}
 
 export default function DashboardPage() {
   const { user } = useAuthStore()
   const [mounted, setMounted] = useState(false)
+  const [stats, setStats] = useState<any>(null)
   useEffect(() => { setMounted(true) }, [])
+  useEffect(() => {
+    if (!mounted) return
+    let cancelled = false
+    api
+      .getStats()
+      .then((d) => { if (!cancelled) setStats(d) })
+      .catch(() => { if (!cancelled) setStats({}) })
+    return () => { cancelled = true }
+  }, [mounted])
+
   const role = (user?.role as Role) || 'employee'
   const roleInfo = ROLES[role] || ROLES.employee
 
@@ -85,6 +115,46 @@ export default function DashboardPage() {
   const canViewSettings = hasPermission(role, 'settings:view')
   const canViewApprovalRecords = hasPermission(role, 'approval:records')
   const canCreateReimbursement = hasPermission(role, 'reimbursement:create')
+
+  // 派生数据：把 stats 映射为组件既有字段
+  const derived = useMemo(() => {
+    const my = stats?.my
+    const approval = stats?.approval
+    const employeeRecent: RecentItem[] = (my?.recent || []).map((r: any) => ({
+      id: r.id,
+      title: r.title,
+      type: r.type,
+      amount: Number(r.amount) || 0,
+      status: r.status,
+      date: fmtDate(r.createdAt),
+    }))
+    const pendingApprovals: PendingItem[] = (approval?.pendingList || []).map((r: any) => {
+      const created = new Date(r.createdAt).getTime()
+      const hours = isNaN(created) ? 0 : (Date.now() - created) / 3600000
+      return {
+        id: r.id,
+        title: r.title,
+        applicant: r.submitter || '',
+        department: r.department || '',
+        amount: Number(r.amount) || 0,
+        submittedAt: fmtRelative(r.createdAt),
+        urgent: hours > 48,
+        step: 1,
+        totalSteps: 3,
+      }
+    })
+    const monthlyData = (stats?.monthlyTrend || []).map((m: any) => ({
+      month: String(m.month || '').replace(/^\d{4}-/, '') + '月',
+      amount: Number(m.amount) || 0,
+    }))
+    const departmentStats = (stats?.departmentStats || []).map((d: any, i: number) => ({
+      name: d.name,
+      amount: Number(d.amount) || 0,
+      count: Number(d.count) || 0,
+      color: DEPT_COLORS[i % DEPT_COLORS.length],
+    }))
+    return { my, approval, employeeRecent, pendingApprovals, monthlyData, departmentStats }
+  }, [stats])
 
   // 欢迎语
   const greeting = useMemo(() => {
@@ -103,10 +173,12 @@ export default function DashboardPage() {
     admin: '系统全局概览，掌握全公司报销动态与关键指标',
   }
 
+  const maxAmount = Math.max(1, ...derived.monthlyData.map((d) => d.amount))
+
   return (
     <div className="space-y-6 max-w-7xl mx-auto">
       {/* === SSR 水合前 loading（避免服务端 user 为 null 误判角色）=== */}
-      {!mounted ? (
+      {!mounted || stats === null ? (
         <div className="flex items-center justify-center py-20">
           <Clock className="w-6 h-6 text-brand-500 animate-spin mr-2" />
           <span className="text-slate-500 dark:text-slate-400">加载工作台...</span>
@@ -146,7 +218,7 @@ export default function DashboardPage() {
       </div>
 
       {/* ============ 数据概览卡片：按角色差异化 ============ */}
-      <DashboardStats role={role} canApprove={canApprove} canViewApprovals={canViewApprovals} />
+      <DashboardStats role={role} stats={stats} />
 
       {/* ============ 主内容区 ============ */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -154,9 +226,9 @@ export default function DashboardPage() {
         <div className="lg:col-span-2 space-y-6">
           {/* 财务/管理员：待我审批；员工：最近报销 */}
           {canViewApprovals ? (
-            <PendingApprovalPanel approvals={pendingApprovals} />
+            <PendingApprovalPanel approvals={derived.pendingApprovals} />
           ) : (
-            <RecentReimbursementPanel reimbursements={employeeRecent} />
+            <RecentReimbursementPanel reimbursements={derived.employeeRecent} />
           )}
 
           {/* 月度费用趋势：仅财务/管理员可见 */}
@@ -166,23 +238,27 @@ export default function DashboardPage() {
                 <h2 className="font-semibold text-slate-900 dark:text-white">月度费用趋势</h2>
                 <span className="text-xs text-slate-400">近 6 个月</span>
               </div>
-              <div className="flex items-end justify-between gap-3 h-40">
-                {monthlyData.map((d) => (
-                  <div key={d.month} className="flex-1 flex flex-col items-center gap-2 group">
-                    <div className="w-full flex-1 flex items-end">
-                      <div
-                        className="w-full rounded-t-lg bg-gradient-to-t from-brand-400 to-brand-600 hover:from-brand-500 hover:to-brand-700 transition-colors relative group-hover:opacity-90"
-                        style={{ height: `${(d.amount / maxAmount) * 100}%` }}
-                      >
-                        <div className="opacity-0 group-hover:opacity-100 absolute -top-8 left-1/2 -translate-x-1/2 bg-slate-800 text-white text-xs px-2 py-1 rounded whitespace-nowrap transition-opacity">
-                          ¥{d.amount.toLocaleString()}
+              {derived.monthlyData.length === 0 ? (
+                <p className="text-sm text-slate-400 py-8 text-center">暂无数据</p>
+              ) : (
+                <div className="flex items-end justify-between gap-3 h-40">
+                  {derived.monthlyData.map((d) => (
+                    <div key={d.month} className="flex-1 flex flex-col items-center gap-2 group">
+                      <div className="w-full flex-1 flex items-end">
+                        <div
+                          className="w-full rounded-t-lg bg-gradient-to-t from-brand-400 to-brand-600 hover:from-brand-500 hover:to-brand-700 transition-colors relative group-hover:opacity-90"
+                          style={{ height: `${(d.amount / maxAmount) * 100}%` }}
+                        >
+                          <div className="opacity-0 group-hover:opacity-100 absolute -top-8 left-1/2 -translate-x-1/2 bg-slate-800 text-white text-xs px-2 py-1 rounded whitespace-nowrap transition-opacity">
+                            ¥{d.amount.toLocaleString()}
+                          </div>
                         </div>
                       </div>
+                      <span className="text-xs text-slate-400">{d.month}</span>
                     </div>
-                    <span className="text-xs text-slate-400">{d.month}</span>
-                  </div>
-                ))}
-              </div>
+                  ))}
+                </div>
+              )}
             </div>
           )}
 
@@ -214,27 +290,31 @@ export default function DashboardPage() {
                   详细分析 <ArrowRight className="w-3.5 h-3.5" />
                 </Link>
               </div>
-              <div className="space-y-3">
-                {departmentStats.map((dept) => {
-                  const max = Math.max(...departmentStats.map((d) => d.amount))
-                  return (
-                    <div key={dept.name}>
-                      <div className="flex items-center justify-between text-sm mb-1.5">
-                        <span className="text-slate-700 dark:text-slate-200 font-medium">{dept.name}</span>
-                        <span className="text-slate-500 dark:text-slate-400">
-                          ¥ {dept.amount.toLocaleString('zh-CN')} · {dept.count} 单
-                        </span>
+              {derived.departmentStats.length === 0 ? (
+                <p className="text-sm text-slate-400 py-6 text-center">暂无数据</p>
+              ) : (
+                <div className="space-y-3">
+                  {derived.departmentStats.map((dept) => {
+                    const max = Math.max(1, ...derived.departmentStats.map((d) => d.amount))
+                    return (
+                      <div key={dept.name}>
+                        <div className="flex items-center justify-between text-sm mb-1.5">
+                          <span className="text-slate-700 dark:text-slate-200 font-medium">{dept.name}</span>
+                          <span className="text-slate-500 dark:text-slate-400">
+                            ¥ {dept.amount.toLocaleString('zh-CN')} · {dept.count} 单
+                          </span>
+                        </div>
+                        <div className="h-2 rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden">
+                          <div
+                            className={`h-full rounded-full ${dept.color}`}
+                            style={{ width: `${(dept.amount / max) * 100}%` }}
+                          />
+                        </div>
                       </div>
-                      <div className="h-2 rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden">
-                        <div
-                          className={`h-full rounded-full ${dept.color}`}
-                          style={{ width: `${(dept.amount / max) * 100}%` }}
-                        />
-                      </div>
-                    </div>
-                  )
-                })}
-              </div>
+                    )
+                  })}
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -247,11 +327,11 @@ export default function DashboardPage() {
               <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100 dark:border-slate-800">
                 <h2 className="font-semibold text-slate-900 dark:text-white">待我审批</h2>
                 <span className="px-2 py-0.5 text-xs font-semibold text-white bg-red-500 rounded-full">
-                  {pendingApprovals.length}
+                  {derived.approval?.pendingCount ?? derived.pendingApprovals.length}
                 </span>
               </div>
               <div className="divide-y divide-slate-100 dark:divide-slate-800">
-                {pendingApprovals.slice(0, 4).map((item) => (
+                {derived.pendingApprovals.slice(0, 4).map((item) => (
                   <Link
                     key={item.id}
                     href="/dashboard/approvals"
@@ -271,6 +351,9 @@ export default function DashboardPage() {
                     </div>
                   </Link>
                 ))}
+                {derived.pendingApprovals.length === 0 && (
+                  <p className="text-sm text-slate-400 text-center py-8">暂无待审批单据</p>
+                )}
               </div>
               <Link
                 href="/dashboard/approvals"
@@ -294,7 +377,7 @@ export default function DashboardPage() {
                 </Link>
               </div>
               <div className="divide-y divide-slate-100 dark:divide-slate-800">
-                {employeeRecent.slice(0, 4).map((item) => {
+                {derived.employeeRecent.slice(0, 4).map((item) => {
                   const status = statusConfig[item.status] || statusConfig.draft
                   return (
                     <Link
@@ -309,7 +392,7 @@ export default function DashboardPage() {
                         </span>
                       </div>
                       <div className="flex items-center justify-between text-xs text-slate-400">
-                        <span>{item.id} · {item.date}</span>
+                        <span>{item.date}</span>
                         <span className="font-semibold text-slate-600 dark:text-slate-300">
                           ¥ {item.amount.toLocaleString('zh-CN', { minimumFractionDigits: 2 })}
                         </span>
@@ -317,6 +400,9 @@ export default function DashboardPage() {
                     </Link>
                   )
                 })}
+                {derived.employeeRecent.length === 0 && (
+                  <p className="text-sm text-slate-400 text-center py-8">暂无报销记录</p>
+                )}
               </div>
             </div>
           )}
@@ -364,37 +450,40 @@ export default function DashboardPage() {
 }
 
 // ============ 角色差异化统计卡片 ============
-function DashboardStats({ role, canApprove, canViewApprovals }: { role: Role; canApprove: boolean; canViewApprovals: boolean }) {
+function DashboardStats({ role, stats }: { role: Role; stats: any }) {
+  const my = stats?.my
+  const approval = stats?.approval
+
   // 员工：个人报销视角
   if (role === 'employee') {
-    const stats = [
-      { label: '本月报销总额', value: '¥ 3,580.50', change: '+12.5%', trend: 'up' as const, icon: Wallet, color: 'text-brand-600', bg: 'bg-brand-50 dark:bg-brand-900/20' },
-      { label: '审批中', value: '1', change: '1 等待审批', trend: 'neutral' as const, icon: Clock, color: 'text-amber-600', bg: 'bg-amber-50 dark:bg-amber-900/20' },
-      { label: '已通过', value: '3', change: '+2 本月', trend: 'up' as const, icon: CheckCircle2, color: 'text-green-600', bg: 'bg-green-50 dark:bg-green-900/20' },
-      { label: '已驳回', value: '1', change: '-1 较上月', trend: 'down' as const, icon: XCircle, color: 'text-red-500', bg: 'bg-red-50 dark:bg-red-900/20' },
+    const s = [
+      { label: '本月报销总额', value: `¥ ${fmtMoney(my?.monthTotal)}`, change: '本月', trend: 'neutral' as const, icon: Wallet, color: 'text-brand-600', bg: 'bg-brand-50 dark:bg-brand-900/20' },
+      { label: '审批中', value: String(my?.pendingCount ?? 0), change: '等待审批', trend: 'neutral' as const, icon: Clock, color: 'text-amber-600', bg: 'bg-amber-50 dark:bg-amber-900/20' },
+      { label: '已通过', value: String(my?.approvedCount ?? 0), change: '累计', trend: 'up' as const, icon: CheckCircle2, color: 'text-green-600', bg: 'bg-green-50 dark:bg-green-900/20' },
+      { label: '已驳回', value: String(my?.rejectedCount ?? 0), change: '累计', trend: 'down' as const, icon: XCircle, color: 'text-red-500', bg: 'bg-red-50 dark:bg-red-900/20' },
     ]
-    return <StatsGrid stats={stats} />
+    return <StatsGrid stats={s} />
   }
 
   // 财务：审批中心视角
   if (role === 'finance') {
-    const stats = [
-      { label: '待我审批', value: '3', change: '1 加急', trend: 'neutral' as const, icon: Clock, color: 'text-amber-600', bg: 'bg-amber-50 dark:bg-amber-900/20' },
-      { label: '待审批金额', value: '¥ 28,430', change: '4 张单据', trend: 'neutral' as const, icon: Wallet, color: 'text-brand-600', bg: 'bg-brand-50 dark:bg-brand-900/20' },
-      { label: '本月已处理', value: '46', change: '+8 较上月', trend: 'up' as const, icon: CheckCircle2, color: 'text-green-600', bg: 'bg-green-50 dark:bg-green-900/20' },
-      { label: '超时预警', value: '2', change: '> 48h 未处理', trend: 'down' as const, icon: AlertTriangle, color: 'text-red-500', bg: 'bg-red-50 dark:bg-red-900/20' },
+    const s = [
+      { label: '待我审批', value: String(approval?.pendingCount ?? 0), change: `${approval?.overdueCount ?? 0} 超时`, trend: 'neutral' as const, icon: Clock, color: 'text-amber-600', bg: 'bg-amber-50 dark:bg-amber-900/20' },
+      { label: '待审批金额', value: `¥ ${fmtMoney(approval?.pendingAmount)}`, change: '合计涉及', trend: 'neutral' as const, icon: Wallet, color: 'text-brand-600', bg: 'bg-brand-50 dark:bg-brand-900/20' },
+      { label: '本月已处理', value: String(approval?.processedThisMonth ?? 0), change: '本月', trend: 'up' as const, icon: CheckCircle2, color: 'text-green-600', bg: 'bg-green-50 dark:bg-green-900/20' },
+      { label: '超时预警', value: String(approval?.overdueCount ?? 0), change: '> 48h 未处理', trend: 'down' as const, icon: AlertTriangle, color: 'text-red-500', bg: 'bg-red-50 dark:bg-red-900/20' },
     ]
-    return <StatsGrid stats={stats} />
+    return <StatsGrid stats={s} />
   }
 
   // 管理员：全局概览视角
-  const stats = [
-    { label: '全公司月度报销', value: '¥ 128,605', change: '+12.5%', trend: 'up' as const, icon: Wallet, color: 'text-brand-600', bg: 'bg-brand-50 dark:bg-brand-900/20' },
-    { label: '待审批总数', value: '12', change: '3 加急', trend: 'neutral' as const, icon: Clock, color: 'text-amber-600', bg: 'bg-amber-50 dark:bg-amber-900/20' },
-    { label: '活跃成员', value: '48', change: '+3 本月', trend: 'up' as const, icon: Users, color: 'text-emerald-600', bg: 'bg-emerald-50 dark:bg-emerald-900/20' },
-    { label: '本月增长', value: '+12.5%', change: '同比上升', trend: 'up' as const, icon: TrendingUp, color: 'text-sky-600', bg: 'bg-sky-50 dark:bg-sky-900/20' },
+  const s = [
+    { label: '全公司月度报销', value: `¥ ${fmtMoney(stats?.companyMonthTotal)}`, change: '本月', trend: 'up' as const, icon: Wallet, color: 'text-brand-600', bg: 'bg-brand-50 dark:bg-brand-900/20' },
+    { label: '待审批总数', value: String(approval?.pendingCount ?? 0), change: `${approval?.overdueCount ?? 0} 超时`, trend: 'neutral' as const, icon: Clock, color: 'text-amber-600', bg: 'bg-amber-50 dark:bg-amber-900/20' },
+    { label: '活跃成员', value: String(stats?.activeMembers ?? 0), change: '全部成员', trend: 'up' as const, icon: Users, color: 'text-emerald-600', bg: 'bg-emerald-50 dark:bg-emerald-900/20' },
+    { label: '待审批金额', value: `¥ ${fmtMoney(approval?.pendingAmount)}`, change: '合计涉及', trend: 'up' as const, icon: TrendingUp, color: 'text-sky-600', bg: 'bg-sky-50 dark:bg-sky-900/20' },
   ]
-  return <StatsGrid stats={stats} />
+  return <StatsGrid stats={s} />
 }
 
 function StatsGrid({ stats }: { stats: Array<{ label: string; value: string; change: string; trend: 'up' | 'down' | 'neutral'; icon: typeof Wallet; color: string; bg: string }> }) {
@@ -434,7 +523,7 @@ function StatsGrid({ stats }: { stats: Array<{ label: string; value: string; cha
 }
 
 // ============ 最近报销面板（员工视角） ============
-function RecentReimbursementPanel({ reimbursements }: { reimbursements: typeof employeeRecent }) {
+function RecentReimbursementPanel({ reimbursements }: { reimbursements: RecentItem[] }) {
   return (
     <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 overflow-hidden">
       <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100 dark:border-slate-800">
@@ -462,7 +551,7 @@ function RecentReimbursementPanel({ reimbursements }: { reimbursements: typeof e
               <div className="flex-1 min-w-0">
                 <p className="text-sm font-medium text-slate-900 dark:text-white truncate">{item.title}</p>
                 <p className="text-xs text-slate-400 mt-0.5">
-                  {item.id} · {item.type} · {item.date}
+                  {item.type} · {item.date}
                 </p>
               </div>
               <div className="text-right flex-shrink-0">
@@ -476,13 +565,16 @@ function RecentReimbursementPanel({ reimbursements }: { reimbursements: typeof e
             </Link>
           )
         })}
+        {reimbursements.length === 0 && (
+          <p className="text-sm text-slate-400 text-center py-8">暂无报销记录</p>
+        )}
       </div>
     </div>
   )
 }
 
 // ============ 待审批面板（财务/管理员视角） ============
-function PendingApprovalPanel({ approvals }: { approvals: typeof pendingApprovals }) {
+function PendingApprovalPanel({ approvals }: { approvals: PendingItem[] }) {
   return (
     <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 overflow-hidden">
       <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100 dark:border-slate-800">
@@ -522,7 +614,7 @@ function PendingApprovalPanel({ approvals }: { approvals: typeof pendingApproval
                 )}
               </p>
               <p className="text-xs text-slate-400 mt-0.5">
-                {item.id} · {item.applicant} · {item.department} · {item.submittedAt}
+                {item.applicant} · {item.department} · {item.submittedAt}
               </p>
               <div className="flex items-center gap-2 mt-1.5">
                 <div className="flex-1 h-1 rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden max-w-[120px]">
@@ -549,6 +641,9 @@ function PendingApprovalPanel({ approvals }: { approvals: typeof pendingApproval
             </div>
           </Link>
         ))}
+        {approvals.length === 0 && (
+          <p className="text-sm text-slate-400 text-center py-8">暂无待审批单据</p>
+        )}
       </div>
     </div>
   )

@@ -375,6 +375,11 @@ export const api = {
     if (data.code !== 'SUCCESS' || !data.data) throw new Error(data.message || '获取列表失败')
     return data.data
   },
+  async getStats() {
+    const { data } = await instance.get<ApiResponse<any>>('/stats')
+    if (data.code !== 'SUCCESS' || !data.data) throw new Error(data.message || '获取统计数据失败')
+    return data.data
+  },
   async getReimbursement(id: string) {
     const { data } = await instance.get<ApiResponse<any>>(`/reimbursements/${id}`)
     if (data.code !== 'SUCCESS' || !data.data) throw new Error(data.message || '获取详情失败')
@@ -400,6 +405,46 @@ export const api = {
     const { data } = await instance.post<ApiResponse<any>>(`/reimbursements/${id}/pay`)
     return data
   },
+
+  // === 成员管理 ===
+  async listMembers(params?: { keyword?: string }) {
+    const { data } = await instance.get<ApiResponse<{ list: any[]; pagination: any }>>('/users', { params })
+    if (data.code !== 'SUCCESS' || !data.data) throw new Error(data.message || '获取成员列表失败')
+    return data.data
+  },
+
+  async createMember(payload: {
+    name: string
+    phone: string
+    email?: string
+    password?: string
+    role?: 'admin' | 'finance' | 'employee'
+    department?: string
+  }) {
+    const { data } = await instance.post<ApiResponse<any>>('/users', payload)
+    if (data.code !== 'SUCCESS' || !data.data) throw new Error(data.message || '创建成员失败')
+    return data.data
+  },
+
+  async updateMember(id: string, payload: Partial<{
+    name: string
+    phone: string
+    email?: string
+    password?: string
+    role?: 'admin' | 'finance' | 'employee'
+    department?: string
+  }>) {
+    const { data } = await instance.patch<ApiResponse<any>>(`/users/${id}`, payload)
+    if (data.code !== 'SUCCESS' || !data.data) throw new Error(data.message || '更新成员失败')
+    return data.data
+  },
+
+  async deleteMember(id: string) {
+    const { data } = await instance.delete<ApiResponse<any>>(`/users/${id}`)
+    if (data.code !== 'SUCCESS') throw new Error(data.message || '删除成员失败')
+    return data.data
+  },
+
 }
 
 // --- 智能 OCR 解析引擎（语义匹配，非随机） ---

@@ -2,9 +2,9 @@ import { Hono } from 'hono'
 import { z } from 'zod'
 import { zValidator } from '@hono/zod-validator'
 import bcrypt from 'bcryptjs'
-import { eq, or, ilike, desc } from 'drizzle-orm'
+import { eq, or, ilike, desc, and } from 'drizzle-orm'
 import { db } from '../db'
-import { users, companies } from '../db/schema'
+import { users, companies, reimbursements } from '../db/schema'
 import { authMiddleware, currentUser, isAdminOrFinance } from '../lib/auth'
 
 const user = new Hono()
@@ -93,5 +93,61 @@ user.post(
     return c.json({ code: 'SUCCESS', data: toUser(u) }, 201)
   }
 )
+
+
+// 更新用户（管理员/财务）
+user.patch(
+  '/:id',
+  zValidator('json', createUserSchema.partial(), (result, c) => {
+    if (!result.success) {
+      return c.json({ code: 'VALIDATION_ERROR', message: '参数验证失败', errors: result.error.flatten() }, 400)
+    }
+  }),
+  async (c) => {
+    const me = currentUser(c)
+    if (!isAdminOrFinance(me.role)) return c.json({ code: 'FORBIDDEN', message: '无权限' }, 403)
+
+    const id = c.req.param('id')
+    const data = c.req.valid('json')
+
+    const [existing] = await db.select().from(users).where(eq(users.id, id)).limit(1)
+    if (!existing) {
+      return c.json({ code: 'NOT_FOUND', message: '用户不存在' }, 404)
+    }
+
+    const updateData: any = {}
+    if (data.name) updateData.name = data.name
+    if (data.phone) updateData.phone = data.phone
+    if (data.email !== undefined) updateData.email = data.email ? data.email.toLowerCase() : null
+    if (data.role) updateData.role = data.role
+    if (data.department !== undefined) updateData.department = data.department || null
+    if (data.password) {
+      updateData.passwordHash = await bcrypt.hash(data.password, 10)
+    }
+
+    const [updated] = await db.update(users).set(updateData).where(eq(users.id, id)).returning()
+    return c.json({ code: 'SUCCESS', data: toUser(updated) })
+  }
+)
+
+// 删除用户（管理员/财务）
+user.delete('/:id', async (c) => {
+  const me = currentUser(c)
+  if (!isAdminOrFinance(me.role)) return c.json({ code: 'FORBIDDEN', message: '无权限' }, 403)
+
+  const id = c.req.param('id')
+
+  const [existing] = await db.select().from(users).where(eq(users.id, id)).limit(1)
+  if (!existing) {
+    return c.json({ code: 'NOT_FOUND', message: '用户不存在' }, 404)
+  }
+
+  if (id === me.sub) {
+    return c.json({ code: 'FORBIDDEN', message: '不能删除自己的账号' }, 403)
+  }
+
+  await db.delete(users).where(eq(users.id, id))
+  return c.json({ code: 'SUCCESS' })
+})
 
 export const userRoutes = user
