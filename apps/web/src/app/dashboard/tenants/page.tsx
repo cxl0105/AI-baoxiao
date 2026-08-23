@@ -68,7 +68,7 @@ export default function TenantsPage() {
     setMounted(true)
     if (canManage) load()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  }, [canManage])
 
   const filtered = useMemo(() => {
     const kw = search.trim().toLowerCase()
