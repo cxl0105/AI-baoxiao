@@ -49,6 +49,10 @@ const makeLoginSchema = (mode: LoginMode) =>
 
 type LoginForm = z.infer<ReturnType<typeof makeLoginSchema>>
 
+// 演示账号开关：生产环境默认关闭（不显示演示账号入口）
+// 仅当构建时 NEXT_PUBLIC_SHOW_DEMO=true 时才显示演示账号快速登录区块
+const SHOW_DEMO = process.env.NEXT_PUBLIC_SHOW_DEMO === 'true'
+
 export default function LoginPage() {
   const router = useRouter()
   const login = useAuthStore((s) => s.login)
@@ -373,7 +377,8 @@ export default function LoginPage() {
             </Link>
           </p>
 
-          {/* 演示账号快速登录 */}
+          {/* 演示账号快速登录（生产环境默认关闭） */}
+          {SHOW_DEMO && (
           <div className="mt-6">
             <p className="text-sm text-slate-600 dark:text-slate-400 font-medium mb-3">
               演示账号（密码均为 123456，点击直接登录）
@@ -401,6 +406,7 @@ export default function LoginPage() {
               })}
             </div>
           </div>
+          )}
 
           {/* 返回首页 */}
           <div className="mt-6 text-center">
