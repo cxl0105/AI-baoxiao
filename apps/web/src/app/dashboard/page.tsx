@@ -168,6 +168,7 @@ export default function DashboardPage() {
 
   // 角色副标题
   const roleSubtitle: Record<Role, string> = {
+    platform: '平台运营中心，管理所有企业（租户）',
     employee: '这是你的个人报销工作台，查看你的报销进度',
     manager: '部门管理中心，审批本部门报销、管理部门成员',
     finance: '财务管理中心，及时处理待审批单据与统计分析',

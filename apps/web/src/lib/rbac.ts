@@ -4,9 +4,10 @@
  */
 
 // --- 角色枚举（全项目唯一权威定义）---
-export type Role = 'admin' | 'gm' | 'finance' | 'manager' | 'employee'
+export type Role = 'platform' | 'admin' | 'gm' | 'finance' | 'manager' | 'employee'
 
 export const ROLES: Record<Role, { label: string; desc: string; color: string }> = {
+  platform: { label: '平台管理员', desc: '平台运营方：管理所有企业（租户）的新增与删除', color: 'purple' },
   admin: { label: '系统管理员', desc: '全权管理本企业所有数据（软件本身除外）', color: 'amber' },
   gm: { label: '总经理', desc: '与管理员同权限，管理本企业所有数据', color: 'orange' },
   finance: { label: '财务人员', desc: '审核报销单、付款、查看统计报表', color: 'emerald' },
@@ -31,9 +32,14 @@ export type Permission =
   | 'members:manage_dept'       // 管理本部门成员（manager）
   | 'settings:manage'
   | 'settings:view'
+  | 'tenants:manage'          // 平台管理员：管理企业（租户）
 
 // --- 角色 → 权限映射 ---
 export const ROLE_PERMISSIONS: Record<Role, Permission[]> = {
+  platform: [
+    'dashboard:view',
+    'tenants:manage',
+  ],
   admin: [
     'dashboard:view',
     'reimbursement:create', 'reimbursement:view', 'reimbursement:edit', 'reimbursement:delete', 'reimbursement:submit',
@@ -98,6 +104,7 @@ export const NAV_PERMISSIONS: Record<string, Permission | undefined> = {
   '/dashboard/analytics': 'analytics:view',
   '/dashboard/members': 'members:manage',
   '/dashboard/settings': 'settings:view',
+  '/dashboard/tenants': 'tenants:manage',
 }
 
 // --- 演示账号（Mock 登录用）---
@@ -109,6 +116,7 @@ export const DEMO_ACCOUNTS: Array<{
   department: string
   phone?: string
 }> = [
+  { email: 'platform@example.com', password: '123456', role: 'platform', name: '平台管理员', department: '平台运营', phone: '13900000000' },
   { email: 'admin@example.com', password: '123456', role: 'admin', name: '管理员', department: '管理层', phone: '13800000001' },
   { email: 'gm@example.com', password: '123456', role: 'gm', name: '总经理', department: '管理层', phone: '13800000005' },
   { email: 'finance@example.com', password: '123456', role: 'finance', name: '财务专员', department: '财务部', phone: '13800000002' },

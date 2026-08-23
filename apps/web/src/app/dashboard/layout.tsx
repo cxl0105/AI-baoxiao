@@ -24,6 +24,7 @@ import {
   UserCircle,
   Stamp,
   Gauge,
+  Building2,
 } from 'lucide-react'
 import { useAuthStore } from '@/lib/auth'
 import { hasPermission, NAV_PERMISSIONS, ROLES, type Role } from '@/lib/rbac'
@@ -51,6 +52,7 @@ const navItemsConfig = [
   { label: '统计分析', href: '/dashboard/analytics', icon: BarChart3, perm: 'analytics:view' as const },
   { label: '成员管理', href: '/dashboard/members', icon: Users, perm: 'members:manage' as const },
   { label: '系统设置', href: '/dashboard/settings', icon: Settings, perm: 'settings:view' as const },
+  { label: '企业管理', href: '/dashboard/tenants', icon: Building2, perm: 'tenants:manage' as const },
 ]
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {

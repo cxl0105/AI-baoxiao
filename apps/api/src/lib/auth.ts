@@ -60,6 +60,11 @@ export function currentUser(c: any): UserContext {
 
 // ============ 5 级角色权限辅助 ============
 
+/** 平台超级管理员：不属于任何企业，管理所有租户（企业）的新增/删除 */
+export function isPlatformAdmin(role: string): boolean {
+  return role === 'platform'
+}
+
 /** 超级管理员：admin + gm（总经理与管理员同权限） */
 export function isSuperAdmin(role: string): boolean {
   return role === 'admin' || role === 'gm'

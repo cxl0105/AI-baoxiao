@@ -79,7 +79,8 @@ export default function LoginPage() {
     setServerError('')
     try {
       await login(data.identifier, data.password)
-      router.push('/dashboard')
+      const role = useAuthStore.getState().user?.role
+      router.push(role === 'platform' ? '/dashboard/tenants' : '/dashboard')
     } catch (err) {
       setServerError(formatApiError(err))
     }
@@ -90,7 +91,8 @@ export default function LoginPage() {
     setServerError('')
     try {
       await login(mode === 'phone' ? (acct.phone || acct.email) : acct.email, '123456')
-      router.push('/dashboard')
+      const role = useAuthStore.getState().user?.role
+      router.push(role === 'platform' ? '/dashboard/tenants' : '/dashboard')
     } catch (err) {
       setServerError(formatApiError(err))
     }

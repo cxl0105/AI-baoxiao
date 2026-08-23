@@ -396,6 +396,29 @@ export const api = {
     if (data.code !== 'SUCCESS' || !data.data) throw new Error(data.message || '获取统计数据失败')
     return data.data
   },
+  async listTenants() {
+    const { data } = await instance.get<ApiResponse<any>>('/tenants')
+    if (data.code !== 'SUCCESS' || !data.data) throw new Error(data.message || '获取企业列表失败')
+    return data.data
+  },
+  async createTenant(payload: {
+    name: string
+    taxNo: string
+    fullName?: string
+    industry?: string
+    scale?: string
+    contactPhone?: string
+    adminPhone: string
+  }) {
+    const { data } = await instance.post<ApiResponse<any>>('/tenants', payload)
+    if (data.code !== 'SUCCESS' || !data.data) throw new Error(data.message || '创建企业失败')
+    return data.data
+  },
+  async deleteTenant(id: string) {
+    const { data } = await instance.delete<ApiResponse<any>>(`/tenants/${id}`)
+    if (data.code !== 'SUCCESS') throw new Error(data.message || '删除企业失败')
+    return data.data
+  },
   async getApprovalRecords() {
     const { data } = await instance.get<ApiResponse<any>>('/approval-records')
     if (data.code !== 'SUCCESS' || !data.data) throw new Error(data.message || '获取审批记录失败')

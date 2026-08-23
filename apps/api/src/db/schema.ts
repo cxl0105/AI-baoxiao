@@ -10,7 +10,7 @@ import {
   index,
 } from 'drizzle-orm/pg-core'
 
-export const userRole = pgEnum('user_role', ['admin', 'gm', 'finance', 'manager', 'employee'])
+export const userRole = pgEnum('user_role', ['platform', 'admin', 'gm', 'finance', 'manager', 'employee'])
 
 export const reimbursementStatus = pgEnum('reimbursement_status', [
   'draft',
