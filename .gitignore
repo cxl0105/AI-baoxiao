@@ -43,3 +43,6 @@ temp/
 # Environment-specific
 .env.production
 .env.staging
+
+# 演示环境部署副本（不在版本控制内）
+apps/web-demo/
