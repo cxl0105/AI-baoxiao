@@ -194,8 +194,10 @@ user.delete('/:id', async (c) => {
     return c.json({ code: 'FORBIDDEN', message: '不能删除自己的账号' }, 403)
   }
 
+  // 先删除该用户名下报销单（级联删明细/发票/审批步），避免外键约束阻塞
+  await db.delete(reimbursements).where(eq(reimbursements.userId, id))
   await db.delete(users).where(eq(users.id, id))
-  return c.json({ code: 'SUCCESS' })
+  return c.json({ code: 'SUCCESS', message: '成员及其数据已删除' })
 })
 
 // ============ 注册审批 ============

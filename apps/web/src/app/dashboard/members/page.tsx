@@ -712,8 +712,15 @@ export default function MembersPage() {
                       </button>
                       <button
                         onClick={() => {
-                          if (confirm(`确定删除成员「${m.name}」？`)) {
-                            setMembers((ms) => ms.filter((x) => x.id !== m.id))
+                          if (confirm(`确定删除成员「${m.name}」？删除后将同时清除数据库与本地数据，不可恢复。`)) {
+                            void (async () => {
+                              try {
+                                await api.deleteMember(m.id)
+                                await loadMembers()
+                              } catch (err) {
+                                alert('删除失败: ' + (err instanceof Error ? err.message : String(err)))
+                              }
+                            })()
                           }
                         }}
                         title="删除成员"
