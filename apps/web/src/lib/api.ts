@@ -408,6 +408,8 @@ export const api = {
     industry?: string
     scale?: string
     contactPhone?: string
+    legalPerson?: string
+    adminName: string
     adminPhone: string
   }) {
     const { data } = await instance.post<ApiResponse<any>>('/tenants', payload)

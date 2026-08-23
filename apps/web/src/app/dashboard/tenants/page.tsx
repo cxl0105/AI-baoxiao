@@ -42,7 +42,7 @@ export default function TenantsPage() {
 
   // 新增企业表单
   const [showForm, setShowForm] = useState(false)
-  const [form, setForm] = useState({ name: '', taxNo: '', fullName: '', industry: '', scale: '', contactPhone: '', adminPhone: '' })
+  const [form, setForm] = useState({ name: '', taxNo: '', fullName: '', industry: '', scale: '', contactPhone: '', legalPerson: '', adminName: '', adminPhone: '' })
   const [submitting, setSubmitting] = useState(false)
   const [result, setResult] = useState<null | { company: any; accounts: any[] }>(null)
 
@@ -79,8 +79,12 @@ export default function TenantsPage() {
   }, [list, search])
 
   const submit = async () => {
-    if (!form.name.trim() || !form.taxNo.trim() || !form.adminPhone.trim()) {
-      setError('请填写企业名称、纳税号和初始管理员手机号')
+    if (!form.name.trim() || !form.taxNo.trim() || !form.adminName.trim() || !form.adminPhone.trim()) {
+      setError('请填写企业名称、纳税号、管理员姓名和手机号')
+      return
+    }
+    if (!/^1[3-9]\d{9}$/.test(form.adminPhone.trim())) {
+      setError('管理员手机号格式不正确（需为 11 位大陆手机号）')
       return
     }
     setSubmitting(true)
@@ -93,11 +97,13 @@ export default function TenantsPage() {
         industry: form.industry.trim() || undefined,
         scale: form.scale.trim() || undefined,
         contactPhone: form.contactPhone.trim() || undefined,
+        legalPerson: form.legalPerson.trim() || undefined,
+        adminName: form.adminName.trim(),
         adminPhone: form.adminPhone.trim(),
       })
       setResult(res)
       setShowForm(false)
-      setForm({ name: '', taxNo: '', fullName: '', industry: '', scale: '', contactPhone: '', adminPhone: '' })
+      setForm({ name: '', taxNo: '', fullName: '', industry: '', scale: '', contactPhone: '', legalPerson: '', adminName: '', adminPhone: '' })
       await load()
     } catch (e) {
       setError(formatApiError(e))
@@ -231,9 +237,15 @@ export default function TenantsPage() {
                 <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">纳税号 / 统一社会信用代码 *</label>
                 <input value={form.taxNo} onChange={(e) => setForm({ ...form, taxNo: e.target.value })} placeholder="如：91330100MA27XXXXX" className="w-full px-3 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-sm" />
               </div>
-              <div>
-                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">初始管理员手机号 *（密码 123456）</label>
-                <input value={form.adminPhone} onChange={(e) => setForm({ ...form, adminPhone: e.target.value })} placeholder="如：13800000001" className="w-full px-3 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-sm" />
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">管理员姓名 *</label>
+                  <input value={form.adminName} onChange={(e) => setForm({ ...form, adminName: e.target.value })} placeholder="如：张三" className="w-full px-3 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-sm" />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">管理员手机号 *</label>
+                  <input value={form.adminPhone} onChange={(e) => setForm({ ...form, adminPhone: e.target.value })} placeholder="如：13800000001" className="w-full px-3 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-sm" />
+                </div>
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
@@ -251,9 +263,13 @@ export default function TenantsPage() {
                   <input value={form.fullName} onChange={(e) => setForm({ ...form, fullName: e.target.value })} placeholder="完整工商注册名" className="w-full px-3 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-sm" />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">联系电话</label>
-                  <input value={form.contactPhone} onChange={(e) => setForm({ ...form, contactPhone: e.target.value })} placeholder="如：0571-88888888" className="w-full px-3 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-sm" />
+                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">法人姓名</label>
+                  <input value={form.legalPerson} onChange={(e) => setForm({ ...form, legalPerson: e.target.value })} placeholder="如：李四" className="w-full px-3 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-sm" />
                 </div>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">企业联系电话</label>
+                <input value={form.contactPhone} onChange={(e) => setForm({ ...form, contactPhone: e.target.value })} placeholder="如：0571-88888888" className="w-full px-3 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-sm" />
               </div>
               <p className="text-xs text-slate-400 bg-slate-50 dark:bg-slate-800/50 rounded-lg px-3 py-2">
                 创建后自动生成 4 个账号：企业管理员、总经理、财务专员、部门经理（密码均为 123456）。部门经理可按部门在「成员管理」中继续添加。

@@ -34,6 +34,7 @@ export const companies = pgTable(
     address: text('address'),
     creditCode: text('credit_code'),
     contactPhone: text('contact_phone'),
+    legalPerson: text('legal_person'),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   },
   (t) => ({

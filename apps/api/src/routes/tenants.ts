@@ -20,6 +20,10 @@ const createSchema = z.object({
   industry: z.string().optional(),
   scale: z.string().optional(),
   contactPhone: z.string().optional(),
+  // 法人代表（可选）
+  legalPerson: z.string().optional(),
+  // 初始管理员姓名（自动生成 admin 账号用）
+  adminName: z.string().min(2, '管理员姓名至少 2 个字符'),
   // 初始管理员手机号（自动生成 4 类账号用，密码统一 123456）
   adminPhone: z.string().regex(/^1[3-9]\d{9}$/, '初始管理员手机号格式不正确'),
 })
@@ -82,6 +86,7 @@ tenant.post(
         industry: data.industry || null,
         scale: data.scale || null,
         contactPhone: data.contactPhone || null,
+        legalPerson: data.legalPerson || null,
       })
       .returning()
 
@@ -89,7 +94,7 @@ tenant.post(
     const hash = await bcrypt.hash('123456', 10)
     // 生成不冲突的占位手机号
     const accounts = [
-      { name: '企业管理员', role: 'admin', phone: data.adminPhone },
+      { name: data.adminName || '企业管理员', role: 'admin', phone: data.adminPhone },
       { name: '总经理', role: 'gm', phone: null },
       { name: '财务专员', role: 'finance', phone: null },
       { name: '部门经理', role: 'manager', phone: null },
