@@ -78,6 +78,13 @@ auth.post(
     if (!u) return c.json({ code: 'AUTH_FAILED', message: '账号或密码错误' }, 401)
     const ok = await bcrypt.compare(password, u.passwordHash)
     if (!ok) return c.json({ code: 'AUTH_FAILED', message: '账号或密码错误' }, 401)
+    // 审批状态拦截：待审批/禁用账号不可登录
+    if (u.status === 'pending') {
+      return c.json({ code: 'PENDING_APPROVAL', message: '您的注册申请正在等待企业管理员审批，请稍后再试' }, 403)
+    }
+    if (u.status === 'disabled') {
+      return c.json({ code: 'ACCOUNT_DISABLED', message: '账号已被禁用，请联系企业管理员' }, 403)
+    }
     const token = signToken({ sub: u.id, role: u.role, name: u.name })
     // 附带企业基础信息
     let companyInfo: any = null
@@ -148,14 +155,15 @@ auth.post(
         phone: data.phone,
         email,
         passwordHash: hash,
-        // 第一个注册者 = 企业管理员；后续同号注册者 = 普通员工
+        // 第一个注册者 = 企业管理员（active）；后续同号注册者 = 普通员工（pending 待审批）
         role: isFirstUser ? 'admin' : 'employee',
+        status: isFirstUser ? 'active' : 'pending',
         department: data.department || null,
       })
       .returning()
     return c.json({
       code: 'SUCCESS',
-      message: isFirstUser ? '企业已创建，您已成为企业管理员' : '已加入企业',
+      message: isFirstUser ? '企业已创建，您已成为企业管理员' : '注册申请已提交，请等待企业管理员审批',
       data: { userId: u.id, tenantId: company.id, isFirstUser },
     }, 201)
   }

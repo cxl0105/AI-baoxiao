@@ -1,7 +1,7 @@
 import { Hono } from 'hono'
 import { z } from 'zod'
 import { zValidator } from '@hono/zod-validator'
-import { eq, desc, inArray } from 'drizzle-orm'
+import { eq, desc, inArray, and } from 'drizzle-orm'
 import { db } from '../db'
 import { reimbursements, reimbursementItems, invoices, approvalSteps, users } from '../db/schema'
 import { authMiddleware, currentUser, isAdminOrFinance, isApprover, canPay } from '../lib/auth'
@@ -51,14 +51,12 @@ reimb.get('/', async (c) => {
   const p = Math.max(1, Number(page) || 1)
   const ps = Math.min(200, Math.max(1, Number(pageSize) || 50))
 
-  let q = db.select().from(reimbursements)
-  // 多租户隔离：只查本公司
-  q = q.where(eq(reimbursements.companyId, me.companyId)) as any
-  if (status) q = q.where(eq(reimbursements.status, status as any)) as any
-  if (type) q = q.where(eq(reimbursements.type, type)) as any
-  if (!isAdminOrFinance(me.role)) {
-    q = q.where(eq(reimbursements.userId, me.sub)) as any
-  }
+  // 多租户隔离 + 筛选条件：用 and 合并，避免 drizzle where 覆盖
+  const conds: any[] = [eq(reimbursements.companyId, me.companyId)]
+  if (status) conds.push(eq(reimbursements.status, status as any))
+  if (type) conds.push(eq(reimbursements.type, type))
+  if (!isAdminOrFinance(me.role)) conds.push(eq(reimbursements.userId, me.sub))
+  const q = db.select().from(reimbursements).where(and(...conds))
   const all = await q.orderBy(desc(reimbursements.createdAt))
   const pageRows = all.slice((p - 1) * ps, p * ps)
 

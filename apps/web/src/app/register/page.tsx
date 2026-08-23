@@ -64,6 +64,7 @@ export default function RegisterPage() {
   const [showConfirm, setShowConfirm] = useState(false)
   const [serverError, setServerError] = useState('')
   const [success, setSuccess] = useState(false)
+  const [successMsg, setSuccessMsg] = useState('')
 
   const {
     register,
@@ -103,7 +104,7 @@ export default function RegisterPage() {
   const onSubmit = async (data: RegisterForm) => {
     setServerError('')
     try {
-      await api.register({
+      const res = await api.register({
         name: data.name,
         phone: data.phone,
         email: data.email || undefined,
@@ -112,8 +113,13 @@ export default function RegisterPage() {
         taxNo: data.taxNo,
       })
       setSuccess(true)
+      if (res?.isFirstUser) {
+        setSuccessMsg('企业已创建，您已成为企业管理员')
+        setTimeout(() => router.push('/login'), 2000)
+      } else {
+        setSuccessMsg('注册申请已提交，请等待企业管理员审批')
+      }
       useSettingsStore.getState().patchCompany({ fullName: data.companyName })
-      setTimeout(() => router.push('/login'), 2000)
     } catch (err) {
       setServerError(formatApiError(err))
     }
@@ -129,9 +135,18 @@ export default function RegisterPage() {
           </div>
           <h2 className="text-2xl font-bold text-slate-900 dark:text-white mb-3">注册成功！</h2>
           <p className="text-slate-500 dark:text-slate-400 mb-2">
-            企业账户已创建，即将跳转到登录页面...
+            {successMsg || '企业账户已创建'}
           </p>
-          <Loader2 className="w-5 h-5 animate-spin text-brand-500 mx-auto" />
+          {successMsg.includes('等待') ? (
+            <button
+              onClick={() => router.push('/login')}
+              className="mt-4 inline-flex items-center gap-2 px-6 py-2.5 text-sm font-medium text-white bg-brand-600 hover:bg-brand-700 rounded-xl transition-colors"
+            >
+              返回登录
+            </button>
+          ) : (
+            <Loader2 className="w-5 h-5 animate-spin text-brand-500 mx-auto" />
+          )}
         </div>
       </div>
     )

@@ -2,7 +2,7 @@ import { Hono } from 'hono'
 import { z } from 'zod'
 import { zValidator } from '@hono/zod-validator'
 import bcrypt from 'bcryptjs'
-import { eq, or, ilike, desc, and } from 'drizzle-orm'
+import { eq, or, ilike, desc, and, ne } from 'drizzle-orm'
 import { db } from '../db'
 import { users, companies, reimbursements } from '../db/schema'
 import { authMiddleware, currentUser, isAdminOrFinance, isSuperAdmin, canManageAllMembers, isManager } from '../lib/auth'
@@ -27,7 +27,7 @@ function toUser(u: any) {
     phone: u.phone || '',
     role: u.role,
     department: u.department || '',
-    status: 'active',
+    status: u.status || 'active',
     createdAt: u.createdAt,
   }
 }
@@ -39,18 +39,19 @@ user.get('/', async (c) => {
   let rows
   if (isAdminOrFinance(me.role)) {
     // 管理员/总经理/财务：看本公司全部成员
-    let q = db.select().from(users).where(eq(users.companyId, me.companyId))
+    const kwConds: any[] = [eq(users.companyId, me.companyId), ne(users.status, 'pending')]
     if (keyword) {
       const k = `%${keyword}%`
-      q = q.where(or(ilike(users.name, k), ilike(users.phone, k), ilike(users.email, k))) as any
+      kwConds.push(or(ilike(users.name, k), ilike(users.phone, k), ilike(users.email, k)))
     }
-    rows = await q.orderBy(desc(users.createdAt))
+    rows = await db.select().from(users).where(and(...kwConds)).orderBy(desc(users.createdAt))
   } else if (isManager(me.role)) {
     // 部门经理：看本部门成员
     const myRow = await db.select().from(users).where(eq(users.id, me.sub)).limit(1)
     const myDept = myRow[0]?.department || ''
-    let q = db.select().from(users).where(eq(users.companyId, me.companyId))
-    if (myDept) q = q.where(eq(users.department, myDept)) as any
+    const conds: any[] = [eq(users.companyId, me.companyId), ne(users.status, 'pending')]
+    if (myDept) conds.push(eq(users.department, myDept))
+    const q = db.select().from(users).where(and(...conds))
     rows = await q.orderBy(desc(users.createdAt))
   } else {
     rows = await db.select().from(users).where(eq(users.id, me.sub))
@@ -195,6 +196,72 @@ user.delete('/:id', async (c) => {
 
   await db.delete(users).where(eq(users.id, id))
   return c.json({ code: 'SUCCESS' })
+})
+
+// ============ 注册审批 ============
+
+// 待审批列表：admin/gm 看全部，manager 只看本部门
+user.get('/pending', async (c) => {
+  const me = currentUser(c)
+  if (!isSuperAdmin(me.role) && !isManager(me.role)) {
+    return c.json({ code: 'FORBIDDEN', message: '无审批权限' }, 403)
+  }
+  const conds: any[] = [eq(users.companyId, me.companyId), eq(users.status, 'pending')]
+  if (isManager(me.role)) {
+    const myRow = await db.select().from(users).where(eq(users.id, me.sub)).limit(1)
+    const myDept = myRow[0]?.department || ''
+    if (myDept) conds.push(eq(users.department, myDept))
+  }
+  const rows = await db.select().from(users).where(and(...conds)).orderBy(desc(users.createdAt))
+  return c.json({ code: 'SUCCESS', data: { list: rows.map(toUser) } })
+})
+
+// 通过审批：admin/gm 任意，manager 仅本部门
+user.post('/:id/approve', async (c) => {
+  const me = currentUser(c)
+  if (!isSuperAdmin(me.role) && !isManager(me.role)) {
+    return c.json({ code: 'FORBIDDEN', message: '无审批权限' }, 403)
+  }
+  const id = c.req.param('id')
+  const [existing] = await db.select().from(users).where(eq(users.id, id)).limit(1)
+  if (!existing) return c.json({ code: 'NOT_FOUND', message: '申请不存在' }, 404)
+  if (existing.companyId !== me.companyId) return c.json({ code: 'FORBIDDEN', message: '无权操作' }, 403)
+  if (existing.status !== 'pending') return c.json({ code: 'BAD_REQUEST', message: '该申请已处理' }, 400)
+
+  if (isManager(me.role)) {
+    const myRow = await db.select().from(users).where(eq(users.id, me.sub)).limit(1)
+    const myDept = myRow[0]?.department || ''
+    if (existing.department !== myDept) {
+      return c.json({ code: 'FORBIDDEN', message: '部门经理仅可审批本部门员工的申请' }, 403)
+    }
+  }
+
+  await db.update(users).set({ status: 'active', updatedAt: new Date() }).where(eq(users.id, id))
+  return c.json({ code: 'SUCCESS', message: '已通过审批' })
+})
+
+// 拒绝：删除 pending 记录
+user.post('/:id/reject', async (c) => {
+  const me = currentUser(c)
+  if (!isSuperAdmin(me.role) && !isManager(me.role)) {
+    return c.json({ code: 'FORBIDDEN', message: '无审批权限' }, 403)
+  }
+  const id = c.req.param('id')
+  const [existing] = await db.select().from(users).where(eq(users.id, id)).limit(1)
+  if (!existing) return c.json({ code: 'NOT_FOUND', message: '申请不存在' }, 404)
+  if (existing.companyId !== me.companyId) return c.json({ code: 'FORBIDDEN', message: '无权操作' }, 403)
+  if (existing.status !== 'pending') return c.json({ code: 'BAD_REQUEST', message: '该申请已处理' }, 400)
+
+  if (isManager(me.role)) {
+    const myRow = await db.select().from(users).where(eq(users.id, me.sub)).limit(1)
+    const myDept = myRow[0]?.department || ''
+    if (existing.department !== myDept) {
+      return c.json({ code: 'FORBIDDEN', message: '部门经理仅可审批本部门员工的申请' }, 403)
+    }
+  }
+
+  await db.delete(users).where(eq(users.id, id))
+  return c.json({ code: 'SUCCESS', message: '已拒绝并删除申请' })
 })
 
 export const userRoutes = user

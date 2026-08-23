@@ -466,6 +466,23 @@ export const api = {
     return data.data
   },
 
+  // 注册审批
+  async listPendingMembers() {
+    const { data } = await instance.get<ApiResponse<{ list: any[] }>>('/users/pending')
+    if (data.code !== 'SUCCESS' || !data.data) throw new Error(data.message || '获取待审批列表失败')
+    return data.data
+  },
+  async approveMember(id: string) {
+    const { data } = await instance.post<ApiResponse<any>>(`/users/${id}/approve`)
+    if (data.code !== 'SUCCESS') throw new Error(data.message || '审批失败')
+    return data.data
+  },
+  async rejectMember(id: string) {
+    const { data } = await instance.post<ApiResponse<any>>(`/users/${id}/reject`)
+    if (data.code !== 'SUCCESS') throw new Error(data.message || '拒绝失败')
+    return data.data
+  },
+
   // === 预算管理 ===
   async getBudgets(kind?: string) {
     const { data } = await instance.get<ApiResponse<any>>('/budgets', { params: kind ? { kind } : {} })
