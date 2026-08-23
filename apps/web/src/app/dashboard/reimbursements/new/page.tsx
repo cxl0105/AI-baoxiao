@@ -11,6 +11,7 @@ import {
   ArrowLeft,
   Upload,
   FileText,
+  Calendar,
   Sparkles,
   Plus,
   Trash2,
@@ -155,6 +156,9 @@ export default function NewReimbursementPage() {
   const [isDragging, setIsDragging] = useState(false)
   const [serverError, setServerError] = useState('')
   const [submitSuccess, setSubmitSuccess] = useState<{ id: string; status: 'draft' | 'pending' } | null>(null)
+  // 「出差 vs 日常」提醒弹窗
+  const [typeChoiceOpen, setTypeChoiceOpen] = useState(false)
+  const pendingSubmitModeRef = useRef<'submit' | 'draft'>('submit')
 
   // --- Settings: 默认视图 / 金额精度 ---
   const defaultView = useSettingsStore((s) => s.ui.invoiceViewMode)
@@ -564,7 +568,7 @@ export default function NewReimbursementPage() {
   const doSubmit: SubmitHandler<FormValues> = async (values, ev) => {
     setServerError('')
     const submitter = (ev?.nativeEvent as any)?.submitter as HTMLElement | undefined
-    const isSubmit = submitter?.dataset?.action === 'submit'
+    const isSubmit = pendingSubmitModeRef.current === 'submit' ? true : submitter?.dataset?.action === 'submit'
     try {
       const result = await api.createReimbursement({ ...(values as any), submit: isSubmit })
       // 打通：把真实发票转 base64 持久化，供审批预览
@@ -1198,13 +1202,13 @@ export default function NewReimbursementPage() {
                 保存草稿
               </button>
               <button
-                type="submit"
-                data-action="submit"
+                type="button"
+                onClick={() => setTypeChoiceOpen(true)}
                 disabled={isSubmitting}
                 className="inline-flex items-center gap-2 px-5 py-2.5 text-sm font-medium text-white bg-brand-600 hover:bg-brand-700 disabled:bg-brand-400 disabled:cursor-not-allowed rounded-xl shadow-lg shadow-brand-600/20 hover:shadow-xl hover:shadow-brand-600/30 transition-all"
               >
                 {isSubmitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
-                提交审批
+                提交报销
               </button>
             </div>
           </div>
@@ -1212,6 +1216,67 @@ export default function NewReimbursementPage() {
       </form>
 
       {/* ===== OCR 校正弹窗 ===== */}
+      {/* ===== 出差/日常 报销方式选择弹窗 ===== */}
+      {typeChoiceOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={() => setTypeChoiceOpen(false)} />
+          <div className="relative w-full max-w-md bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-800 overflow-hidden">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100 dark:border-slate-800">
+              <h3 className="font-semibold text-slate-900 dark:text-white flex items-center gap-2">
+                <Send className="w-4 h-4 text-brand-600" />
+                选择报销方式
+              </h3>
+              <button onClick={() => setTypeChoiceOpen(false)} className="p-1.5 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="p-5 space-y-3">
+              <p className="text-sm text-slate-500 dark:text-slate-400">
+                请确认本次报销类型，不同方式对应不同流程：
+              </p>
+              <button
+                type="button"
+                onClick={() => {
+                  setTypeChoiceOpen(false)
+                  pendingSubmitModeRef.current = 'submit'
+                  void handleSubmit(doSubmit)()
+                }}
+                disabled={isSubmitting}
+                className="w-full flex items-start gap-3 p-4 rounded-xl border border-slate-200 dark:border-slate-700 hover:border-brand-400 dark:hover:border-brand-600 hover:bg-brand-50 dark:hover:bg-brand-900/10 transition-colors text-left disabled:opacity-50"
+              >
+                <div className="w-10 h-10 rounded-lg bg-brand-50 dark:bg-brand-900/20 flex items-center justify-center flex-shrink-0">
+                  <FileText className="w-5 h-5 text-brand-600" />
+                </div>
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold text-slate-900 dark:text-white">日常报销 · 直接提交</p>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                    仅报销发票金额（餐饮、办公、交通等），OCR/手动录入后直接提交审批
+                  </p>
+                </div>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setTypeChoiceOpen(false)
+                  router.push('/dashboard/reimbursements/spreadsheet')
+                }}
+                className="w-full flex items-start gap-3 p-4 rounded-xl border border-slate-200 dark:border-slate-700 hover:border-amber-400 dark:hover:border-amber-600 hover:bg-amber-50 dark:hover:bg-amber-900/10 transition-colors text-left"
+              >
+                <div className="w-10 h-10 rounded-lg bg-amber-50 dark:bg-amber-900/20 flex items-center justify-center flex-shrink-0">
+                  <Calendar className="w-5 h-5 text-amber-600" />
+                </div>
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold text-slate-900 dark:text-white">出差报销 · 走电子表格</p>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                    差旅含补贴（住宿/交通/餐补等），通过电子表格报销单填写并多级签字递交
+                  </p>
+                </div>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {editingInvoice && editDraft && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
           <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={() => { setEditingInvoiceId(null); setEditDraft(null) }} />

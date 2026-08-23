@@ -2,6 +2,8 @@
 
 import Link from 'next/link'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useRouter } from 'next/navigation'
+import { api, formatApiError } from '@/lib/api'
 import {
   ArrowLeft,
   Plus,
@@ -183,6 +185,7 @@ const dateDiffDays = (startISO: string, endISO: string): number => {
    页面组件
    ====================================================================== */
 export default function SpreadsheetReimbursementPage() {
+  const router = useRouter()
   const policy = useSettingsStore((s) => s.policy)
   const company = useSettingsStore((s) => s.company)
   const user = useAuthStore((s) => s.user)
@@ -205,6 +208,7 @@ export default function SpreadsheetReimbursementPage() {
 
   // 单据编号（懒初始化，仅首次生成一次避免每次刷新递增）
   const [serialNo, setSerialNo] = useState<string>(() => '')
+  const [submitting, setSubmitting] = useState(false)
   const policyRef = useRef(policy)
   policyRef.current = policy
   useEffect(() => {
@@ -502,7 +506,7 @@ export default function SpreadsheetReimbursementPage() {
     }
   }, [serialNo, reportName, startDate, endDate, originAddr, destAddr, employeeId, department, projectCode, purpose, rows, subsidy, signatures, policy, grandTotal])
 
-  const doSubmit = useCallback(() => {
+  const doSubmit = useCallback(async () => {
     // 提交前的校验
     const errs = issues.filter((i) => i.kind === 'err')
     if (errs.length) {
@@ -513,14 +517,64 @@ export default function SpreadsheetReimbursementPage() {
       showToast({ kind: 'err', msg: '请先「签字确认」作为报销人，再递交审批。' })
       return
     }
-    try {
-      const key = `reimbursement-spreadsheet-submitted-${serialNo || uid()}`
-      localStorage.setItem(key, JSON.stringify({ ...serializeDraft(), status: 'pending_approval', submittedAt: new Date().toISOString() }))
-      showToast({ kind: 'ok', msg: `已递交审批 ✓ 单据：${serialNo || '未编号'} （合计 ${policy?.currency || '¥'}${fmtMoney(grandTotal)}）` })
-    } catch {
-      showToast({ kind: 'err', msg: '递交失败，请稍后重试。' })
+    // 把费用明细行按启用分类展开成后端 items
+    // ExpenseCategoryKey(电子表格: hotel/taxi) -> ExpenseCategory(后端: travel/transport)
+    const mapCat = (k: string) =>
+      k === 'hotel' ? 'travel' : k === 'taxi' ? 'transport' : (k as 'travel' | 'meal' | 'office' | 'communication' | 'transport' | 'entertainment' | 'training' | 'other')
+    const items: Array<{ id: string; category: 'travel' | 'meal' | 'office' | 'communication' | 'transport' | 'entertainment' | 'training' | 'other'; amount: number; description: string; date: string; invoiceNo: string }> = []
+    for (const r of rows) {
+      for (const c of enabledCategories) {
+        const amt = n(r.amounts[c.key as ExpenseCategoryKey])
+        if (amt > 0) {
+          items.push({
+            id: uid(),
+            category: mapCat(c.key as string),
+            amount: amt,
+            description: r.note || c.label || c.key,
+            date: r.date || startDate || todayISO(),
+            invoiceNo: '',
+          })
+        }
+      }
     }
-  }, [issues, applicantKey, signatures, serialNo, policy, grandTotal])
+    // 出差补贴作为一条独立明细（金额 > 0 时）
+    if (subsidyTotal > 0) {
+      items.push({
+        id: uid(),
+        category: mapCat('other'),
+        amount: subsidyTotal,
+        description: `出差补贴（${activeSubsidy?.label || subsidy.subsidyKey || '差旅'} 全天${subsidy.fullDays}天 半天${subsidy.halfDays}天）`,
+        date: endDate || startDate || todayISO(),
+        invoiceNo: '',
+      })
+    }
+
+    try {
+      setSubmitting(true)
+      const result = await api.createReimbursement({
+        title: reportName || `差旅报销 - ${startDate || ''}`,
+        type: 'travel',
+        department: department || undefined,
+        description: purpose || undefined,
+        startDate: startDate || undefined,
+        endDate: endDate || undefined,
+        submit: true,
+        items,
+      })
+      // 本地仍存一份草稿快照，便于历史回溯
+      try {
+        const key = `reimbursement-spreadsheet-submitted-${serialNo || uid()}`
+        localStorage.setItem(key, JSON.stringify({ ...serializeDraft(), status: 'pending_approval', submittedAt: new Date().toISOString(), backendId: result.id }))
+      } catch { /* ignore */ }
+      showToast({ kind: 'ok', msg: `已递交审批 ✓ 单据已进入报销单列表（合计 ${policy?.currency || '¥'}${fmtMoney(grandTotal)}）` })
+      // 跳转到报销单列表，让员工看到审批流
+      setTimeout(() => router.push('/dashboard/reimbursements'), 1200)
+    } catch (e) {
+      showToast({ kind: 'err', msg: '递交失败：' + formatApiError(e) })
+    } finally {
+      setSubmitting(false)
+    }
+  }, [issues, applicantKey, signatures, serialNo, policy, grandTotal, rows, enabledCategories, subsidyTotal, activeSubsidy, subsidy, reportName, startDate, endDate, department, purpose])
 
   const doReset = () => {
     if (!window.confirm('确定清空当前单据并重置为新一张？（当前未保存内容会丢失）')) return
