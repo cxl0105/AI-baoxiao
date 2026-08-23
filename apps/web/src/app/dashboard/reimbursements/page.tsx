@@ -441,9 +441,22 @@ export default function ReimbursementListPage() {
                   <td className="px-3 py-4 min-w-[130px]">
                     <div className="flex items-center gap-2">
                       <div className="w-7 h-7 rounded-full bg-amber-100 dark:bg-amber-900/30 text-amber-600 dark:text-amber-300 flex items-center justify-center text-[11px] font-semibold">
-                        {r.approver.slice(0, 1)}
+                        {(r.approver || '待审').slice(0, 1)}
                       </div>
-                      <span className="text-sm text-slate-600 dark:text-slate-300">{r.approver}</span>
+                      <div className="min-w-0">
+                        <span className="text-sm text-slate-600 dark:text-slate-300 block truncate">{r.approver || '待审批'}</span>
+                        {r.approvalFlow && r.approvalFlow.totalSteps > 0 && (
+                          <span className="text-[11px] text-slate-400 flex items-center gap-1 mt-0.5">
+                            <span className="inline-block h-1 w-16 rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden">
+                              <span
+                                className="block h-full bg-amber-400 rounded-full"
+                                style={{ width: `${Math.min(100, (r.approvalFlow.currentStep / Math.max(1, r.approvalFlow.totalSteps)) * 100)}%` }}
+                              />
+                            </span>
+                            {r.approvalFlow.currentStep}/{r.approvalFlow.totalSteps}
+                          </span>
+                        )}
+                      </div>
                     </div>
                   </td>
                   <td className="px-3 py-4">

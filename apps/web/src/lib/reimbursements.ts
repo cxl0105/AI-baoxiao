@@ -48,6 +48,7 @@ export interface ReimbursementListItem {
   createdAt: string
   updatedAt: string
   approver: string
+  approvalFlow?: { currentStep: number; totalSteps: number; nodes: Array<{ actor: string; action: string }> }
   department: string
   submitter: string
   items: Array<{

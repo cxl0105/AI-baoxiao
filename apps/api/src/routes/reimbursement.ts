@@ -74,6 +74,16 @@ reimb.get('/', async (c) => {
     itemsByReimb.get(it.reimbursementId)!.push(it)
   }
 
+  // 批量查审批步骤，用于填充「当前审批人」+ 审批流摘要
+  const stepRows = reimbIds.length
+    ? await db.select().from(approvalSteps).where(inArray(approvalSteps.reimbursementId, reimbIds))
+    : []
+  const stepsByReimb = new Map<string, any[]>()
+  for (const st of stepRows) {
+    if (!stepsByReimb.has(st.reimbursementId)) stepsByReimb.set(st.reimbursementId, [])
+    stepsByReimb.get(st.reimbursementId)!.push(st)
+  }
+
   const list = pageRows.map((r) => {
     const u = userMap.get(r.userId)
     return {
@@ -87,7 +97,20 @@ reimb.get('/', async (c) => {
       updatedAt: r.updatedAt,
       department: r.department || '',
       submitter: u?.name || '',
-      approver: '',
+      approver: (() => {
+        const steps = stepsByReimb.get(r.id) || []
+        const pending = steps.find((x) => x.action === 'pending')
+        if (pending) return pending.actor
+        // 无 pending 节点时，取最后一条动作的执行人
+        const last = steps[steps.length - 1]
+        return last ? last.actor : ''
+      })(),
+      approvalFlow: (() => {
+        const steps = (stepsByReimb.get(r.id) || []).sort((a, b) => a.stepIndex - b.stepIndex)
+        const total = steps.length || 0
+        const done = steps.filter((x) => ['submit', 'approve', 'reject', 'pay'].includes(x.action)).length
+        return { currentStep: done, totalSteps: total, nodes: steps.map((x) => ({ actor: x.actor, action: x.action })) }
+      })(),
       items: (itemsByReimb.get(r.id) || []).map((it) => ({
         category: it.category,
         amount: num(it.amount),
