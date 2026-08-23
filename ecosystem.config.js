@@ -3,14 +3,14 @@ module.exports = {
     name: 'ai-baoxiao-web',
     cwd: '/opt/ai-baoxiao/apps/web',
     script: 'node_modules/next/dist/bin/next',
-    args: 'start -p 8080 -H 0.0.0.0',
+    args: 'start -p 3000 -H 127.0.0.1',
     exec_mode: 'fork',
     autorestart: true,
     watch: false,
     max_memory_restart: '1200M',
     env: {
       NODE_ENV: 'production',
-      PORT: 8080,
+      PORT: 3000,
       NEXT_TELEMETRY_DISABLED: '1',
       NEXT_PUBLIC_API_URL: 'https://www.aibaoxiao.top/api/v1'
     },
