@@ -156,15 +156,6 @@ export default function NewReimbursementPage() {
   const [isDragging, setIsDragging] = useState(false)
   const [serverError, setServerError] = useState('')
   const [submitSuccess, setSubmitSuccess] = useState<{ id: string; status: 'draft' | 'pending' } | null>(null)
-  // 免费版配额：plan / 本月已用 / 限额
-  const [planInfo, setPlanInfo] = useState<{ plan: string; usedThisMonth: number; limit: number } | null>(null)
-  useEffect(() => {
-    let cancelled = false
-    api.getMyPlan().then((d) => { if (!cancelled) setPlanInfo(d) }).catch(() => {})
-    return () => { cancelled = true }
-  }, [])
-  const isFree = planInfo?.plan === 'free'
-  const quotaLeft = planInfo ? (planInfo.limit - planInfo.usedThisMonth) : 0
   // 「出差 vs 日常」提醒弹窗
   const [typeChoiceOpen, setTypeChoiceOpen] = useState(false)
   const pendingSubmitModeRef = useRef<'submit' | 'draft'>('submit')
@@ -742,19 +733,6 @@ export default function NewReimbursementPage() {
           </div>
 
           <div className="p-5 space-y-5">
-            {/* 免费版：禁用 OCR，仅手动输入 */}
-            {isFree && (
-              <div className="rounded-xl bg-amber-50 dark:bg-amber-900/10 border border-amber-200 dark:border-amber-800 px-4 py-3">
-                <p className="text-sm font-medium text-amber-800 dark:text-amber-300 flex items-center gap-2">
-                  <AlertTriangle className="w-4 h-4" /> 免费版仅支持手动输入发票
-                </p>
-                <p className="text-xs text-amber-700 dark:text-amber-400 mt-1">
-                  本月免费额度 {planInfo?.usedThisMonth ?? 0}/{planInfo?.limit ?? 10} 张
-                  {quotaLeft <= 0 ? '（已用完，请升级付费版或下月再试）' : `（剩余 ${quotaLeft} 张）`}。OCR 识别为付费版功能。
-                </p>
-              </div>
-            )}
-            {!isFree && (
             <label
               onDragOver={(e) => {
                 e.preventDefault()
@@ -792,7 +770,6 @@ export default function NewReimbursementPage() {
                 </div>
               </div>
             </label>
-            )}
 
             {invoices.length > 0 && (
               <InvoiceSummary

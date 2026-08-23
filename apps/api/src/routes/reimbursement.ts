@@ -1,9 +1,9 @@
 import { Hono } from 'hono'
 import { z } from 'zod'
 import { zValidator } from '@hono/zod-validator'
-import { eq, desc, inArray, and } from 'drizzle-orm'
+import { eq, desc, inArray, and, gte, sql } from 'drizzle-orm'
 import { db } from '../db'
-import { reimbursements, reimbursementItems, invoices, approvalSteps, users } from '../db/schema'
+import { reimbursements, reimbursementItems, invoices, approvalSteps, users, companies } from '../db/schema'
 import { authMiddleware, currentUser, isAdminOrFinance, isApprover, canPay } from '../lib/auth'
 
 const reimb = new Hono()
@@ -198,6 +198,27 @@ reimb.post(
     const items = data.items || []
     const amount = data.totalAmount ?? items.reduce((s, it) => s + (it.amount || 0), 0)
     const status = data.submit ? 'pending' : 'draft'
+
+    // --- 免费版发票配额校验：按企业计，每月免费 10 张发票（报销明细） ---
+    const compRows = await db.select().from(companies).where(eq(companies.id, me.companyId)).limit(1)
+    const plan = compRows[0]?.plan || 'free'
+    if (plan === 'free') {
+      const monthStart = new Date()
+      monthStart.setDate(1)
+      monthStart.setHours(0, 0, 0, 0)
+      const used = await db
+        .select({ cnt: sql<number>`count(*)` })
+        .from(reimbursementItems)
+        .innerJoin(reimbursements, eq(reimbursements.id, reimbursementItems.reimbursementId))
+        .where(and(eq(reimbursements.companyId, me.companyId), gte(reimbursements.createdAt, monthStart)))
+      const usedCount = Number(used[0]?.cnt || 0)
+      if (usedCount + items.length > 10) {
+        return c.json(
+          { code: 'QUOTA_EXCEEDED', message: `本月免费额度已用完（免费版每月 10 张发票，已用 ${usedCount} 张，本次 ${items.length} 张）。请升级付费版或下月再试。` },
+          403
+        )
+      }
+    }
 
     const [r] = await db
       .insert(reimbursements)

@@ -421,11 +421,6 @@ export const api = {
     if (data.code !== 'SUCCESS') throw new Error(data.message || '删除企业失败')
     return data.data
   },
-  async getMyPlan() {
-    const { data } = await instance.get<ApiResponse<any>>('/tenants/me')
-    if (data.code !== 'SUCCESS' || !data.data) throw new Error(data.message || '获取套餐信息失败')
-    return data.data
-  },
   async getApprovalRecords() {
     const { data } = await instance.get<ApiResponse<any>>('/approval-records')
     if (data.code !== 'SUCCESS' || !data.data) throw new Error(data.message || '获取审批记录失败')

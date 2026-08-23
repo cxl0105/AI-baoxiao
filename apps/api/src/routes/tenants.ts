@@ -2,9 +2,9 @@ import { Hono } from 'hono'
 import { z } from 'zod'
 import { zValidator } from '@hono/zod-validator'
 import bcrypt from 'bcryptjs'
-import { eq, desc, count, and } from 'drizzle-orm'
+import { eq, desc, count, and, gte, sql } from 'drizzle-orm'
 import { db } from '../db'
-import { companies, users, reimbursements, budgets, companySettings } from '../db/schema'
+import { companies, users, reimbursements, reimbursementItems, budgets, companySettings } from '../db/schema'
 import { authMiddleware, currentUser, isPlatformAdmin } from '../lib/auth'
 
 const tenant = new Hono()
@@ -52,6 +52,27 @@ tenant.get('/', async (c) => {
     })
   }
   return c.json({ code: 'SUCCESS', data: { list } })
+})
+
+// 当前登录用户所属企业的套餐 + 本月已用发票额度
+tenant.get('/me', async (c) => {
+  const me = currentUser(c)
+  if (!me.companyId) {
+    return c.json({ code: 'SUCCESS', data: { plan: 'pro', usedThisMonth: 0, limit: 0 } })
+  }
+  const compRows = await db.select().from(companies).where(eq(companies.id, me.companyId)).limit(1)
+  const plan = compRows[0]?.plan || 'free'
+  const monthStart = new Date()
+  monthStart.setDate(1)
+  monthStart.setHours(0, 0, 0, 0)
+  const used = await db
+    .select({ cnt: sql<number>`count(*)` })
+    .from(reimbursementItems)
+    .innerJoin(reimbursements, eq(reimbursements.id, reimbursementItems.reimbursementId))
+    .where(and(eq(reimbursements.companyId, me.companyId), gte(reimbursements.createdAt, monthStart)))
+  const usedCount = Number(used[0]?.cnt || 0)
+  const limit = plan === 'free' ? 10 : 0
+  return c.json({ code: 'SUCCESS', data: { plan, usedThisMonth: usedCount, limit } })
 })
 
 // 平台管理员：新增企业，自动生成 4 类账号（管理员/总经理/财务/部门经理），密码 123456

@@ -102,6 +102,8 @@ auth.post(
           address: c0.address || '',
           creditCode: c0.creditCode || '',
           contactPhone: c0.contactPhone || '',
+          legalPerson: c0.legalPerson || '',
+          plan: c0.plan || 'free',
         }
       }
     }
