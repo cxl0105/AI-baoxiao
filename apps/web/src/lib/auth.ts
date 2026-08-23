@@ -36,6 +36,8 @@ export const useAuthStore = create<AuthState>()(
 
       login: async (identifier, password) => {
         set({ isLoading: true })
+        // 先清旧登录态，避免残留 mock/过期 token 干扰新登录
+        set({ token: null, user: null, isAuthenticated: false })
         try {
           const result: LoginResult = await api.login({ identifier, password })
           set({
@@ -51,8 +53,13 @@ export const useAuthStore = create<AuthState>()(
       },
 
       logout: async () => {
-        await api.logout()
+        // 先同步清本地态（不等待后端，避免 logout 请求挂起/超时阻塞导致残留）
         set({ token: null, user: null, isAuthenticated: false })
+        try {
+          await api.logout()
+        } catch {
+          // ignore：后端清理失败不影响本地登出
+        }
       },
 
       fetchMe: async () => {
