@@ -14,6 +14,9 @@ export default function HomePage() {
             <span className="font-semibold text-lg">智报销</span>
           </div>
           <nav className="flex items-center gap-6">
+            <Link href="/pricing" className="text-sm text-slate-600 dark:text-slate-300 hover:text-brand-600 dark:hover:text-brand-400">
+              套餐价格
+            </Link>
             <Link href="/login" className="text-sm text-slate-600 dark:text-slate-300 hover:text-brand-600 dark:hover:text-brand-400">
               登录
             </Link>
@@ -57,6 +60,12 @@ export default function HomePage() {
                 className="w-full sm:w-auto inline-flex items-center justify-center px-8 py-3.5 text-base font-semibold text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:border-brand-300 dark:hover:border-brand-600 rounded-xl transition-all"
               >
                 了解功能
+              </Link>
+              <Link
+                href="/pricing"
+                className="w-full sm:w-auto inline-flex items-center justify-center px-8 py-3.5 text-base font-semibold text-brand-600 dark:text-brand-400 hover:text-brand-700 dark:hover:text-brand-300"
+              >
+                查看套餐价格 →
               </Link>
             </div>
           </div>
