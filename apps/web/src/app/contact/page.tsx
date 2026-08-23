@@ -42,7 +42,7 @@ export default function ContactPage() {
                   </div>
                   <div className="min-w-0">
                     <p className="text-sm text-slate-400 mb-0.5">公司名称</p>
-                    <p className="text-lg font-semibold text-slate-900 dark:text-white">智报销科技有限公司</p>
+                    <p className="text-lg font-semibold text-slate-900 dark:text-white">西津门（赣州）智能科技有限公司</p>
                   </div>
                 </div>
 
@@ -52,7 +52,7 @@ export default function ContactPage() {
                   </div>
                   <div className="min-w-0">
                     <p className="text-sm text-slate-400 mb-0.5">公司地址</p>
-                    <p className="text-lg font-semibold text-slate-900 dark:text-white">赣州市火炬大道</p>
+                    <p className="text-lg font-semibold text-slate-900 dark:text-white">赣州市高新区火炬大道 1 号</p>
                   </div>
                 </div>
 
