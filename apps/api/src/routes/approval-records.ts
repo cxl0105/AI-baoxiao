@@ -19,10 +19,10 @@ records.get('/', async (c) => {
             COALESCE((SELECT COUNT(*) FROM invoices i WHERE i.reimbursement_id = r.id), 0) AS invoice_count,
             COALESCE((SELECT it.category FROM reimbursement_items it WHERE it.reimbursement_id = r.id LIMIT 1), 'other') AS category
      FROM reimbursements r
-     WHERE r.user_id = $1 AND r.company_id = $2
+     WHERE r.user_id = $1
      ORDER BY r.created_at DESC
      LIMIT 200`,
-    [me.sub, me.companyId]
+    [me.sub]
   )
 
   const reimbIds = mineRes.rows.map((r) => r.id)
@@ -78,9 +78,9 @@ records.get('/', async (c) => {
      FROM approval_steps s
      JOIN reimbursements r ON r.id = s.reimbursement_id
      LEFT JOIN users u ON u.id = r.user_id
-     WHERE s.actor = $1 AND s.action IN ('approved', 'rejected') AND r.company_id = $2
+     WHERE s.actor = $1 AND s.action IN ('approved', 'rejected')
      ORDER BY r.id, s.time DESC`,
-    [me.name || me.role, me.companyId]
+    [me.name || me.role]
   )
 
   const participated = partRes.rows.map((r) => ({
