@@ -110,7 +110,9 @@ export const DEMO_ACCOUNTS: Array<{
   phone?: string
 }> = [
   { email: 'admin@example.com', password: '123456', role: 'admin', name: '管理员', department: '管理层', phone: '13800000001' },
+  { email: 'gm@example.com', password: '123456', role: 'gm', name: '总经理', department: '管理层', phone: '13800000005' },
   { email: 'finance@example.com', password: '123456', role: 'finance', name: '财务专员', department: '财务部', phone: '13800000002' },
+  { email: 'manager@example.com', password: '123456', role: 'manager', name: '部门主管', department: '研发部', phone: '13800000006' },
   { email: 'employee@example.com', password: '123456', role: 'employee', name: '员工小李', department: '研发部', phone: '13800000003' },
   { email: 'demo@example.com', password: '123456', role: 'employee', name: '演示用户', department: '研发部', phone: '13800000004' },
 ]

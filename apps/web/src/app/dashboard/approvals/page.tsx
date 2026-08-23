@@ -90,13 +90,26 @@ export default function PendingApprovalPage() {
   }
 
   const all = useMemo(() => {
-    const apiRows = apiList.map((r) => ({
-      ...r,
-      submittedAt: fmtDateTime(r.createdAt),
-      urgent: isUrgent(r.createdAt),
-      currentStep: 1,
-      totalSteps: 3,
-    }))
+    const apiRows = apiList.map((r) => {
+      const nodes: Array<{ actor: string; action: string; role?: string }> = r.approvalFlow?.nodes || []
+      const totalSteps = nodes.length || 3
+      const doneSteps = nodes.filter((n) => n.action === 'approve').length
+      // 当前用户角色是否还有对应 pending 节点可批
+      const myRole = role
+      const canAct = nodes.some(
+        (n) =>
+          n.action === 'pending' &&
+          (n.role === myRole || (n.role === 'gm' && (myRole === 'gm' || myRole === 'admin')))
+      )
+      return {
+        ...r,
+        submittedAt: fmtDateTime(r.createdAt),
+        urgent: isUrgent(r.createdAt),
+        currentStep: doneSteps,
+        totalSteps,
+        canAct,
+      }
+    })
     const submitted = submittedList
       .filter((x) => x.status === 'pending')
       .map((x) => ({
@@ -554,6 +567,14 @@ export default function PendingApprovalPage() {
                   <div className="flex md:inline-flex md:items-center md:justify-end flex-wrap items-center gap-2">
                     {(() => {
                       const isFinalStep = r.currentStep >= r.totalSteps
+                      // 当前用户无对应 pending 节点（已批过/不归你管）：仅查看
+                      if (!r.canAct) {
+                        return (
+                          <span className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-lg text-slate-500 bg-slate-100 dark:bg-slate-800 dark:text-slate-400">
+                            <Clock className="w-3.5 h-3.5" /> 已处理 / 等待他人
+                          </span>
+                        )
+                      }
                       // 财务在终审节点：仅查看，不可操作
                       if (isFinalStep && !canFinalApprove) {
                         return (

@@ -20,6 +20,63 @@ async function genCode(companyId: string): Promise<string> {
   return `BX-${ymd}-${seq}`
 }
 
+// --- 审批流引擎 ---
+// 三级审批：阶段0 = 主管(manager) + 财务(finance)【并行】，阶段1 = 总经理(gm)/管理员(admin)【终审】
+// 同阶段并行：两条 pending 都 approve 才进入下一阶段；最后阶段 approve 后整单 approved
+async function initApprovalFlow(reimbId: string) {
+  await db.insert(approvalSteps).values([
+    { reimbursementId: reimbId, stepIndex: 0, actor: '部门主管', role: 'manager', action: 'pending' },
+    { reimbursementId: reimbId, stepIndex: 0, actor: '财务审核', role: 'finance', action: 'pending' },
+    { reimbursementId: reimbId, stepIndex: 1, actor: '总经理/管理员', role: 'gm', action: 'pending' },
+  ])
+}
+
+// 判断当前用户角色能审批哪个 pending 节点
+// manager -> role='manager'；finance -> role='finance'；gm/admin -> role='gm'（终审节点）
+function matchNodeRole(meRole: string, nodeRole: string | null): boolean {
+  if (nodeRole === 'gm') return meRole === 'gm' || meRole === 'admin'
+  return nodeRole === meRole
+}
+
+async function applyApprovalAction(c: any, id: string, action: 'approve' | 'reject', comment?: string) {
+  const me = currentUser(c)
+  const rows = await db.select().from(reimbursements).where(eq(reimbursements.id, id)).limit(1)
+  const r = rows[0]
+  if (!r) return c.json({ code: 'NOT_FOUND', message: '报销单不存在' }, 404)
+  if (r.companyId !== me.companyId) return c.json({ code: 'FORBIDDEN', message: '无权操作' }, 403)
+  if (r.status !== 'pending') return c.json({ code: 'CONFLICT', message: '该报销单当前状态不可审批' }, 409)
+
+  // 找当前用户能处理的 pending 节点
+  const stepRows = await db.select().from(approvalSteps).where(eq(approvalSteps.reimbursementId, id))
+  const myPending = stepRows.find((st) => st.action === 'pending' && matchNodeRole(me.role, st.role))
+  if (!myPending) return c.json({ code: 'FORBIDDEN', message: '当前审批环节无需你处理（等待其他审批人，或你已审批过）' }, 403)
+
+  if (action === 'reject') {
+    // 驳回：整单 rejected，打回员工
+    await db.update(reimbursements).set({ status: 'rejected', updatedAt: new Date() }).where(eq(reimbursements.id, id))
+    await db.update(approvalSteps)
+      .set({ action: 'reject', actor: me.name || me.role, comment: comment || null, time: new Date() })
+      .where(eq(approvalSteps.id, myPending.id))
+    return c.json({ code: 'SUCCESS', message: '已驳回，退回申请人', data: { id, status: 'rejected' } })
+  }
+
+  // 同意：标记该节点通过
+  await db.update(approvalSteps)
+    .set({ action: 'approve', actor: me.name || me.role, comment: comment || null, time: new Date() })
+    .where(eq(approvalSteps.id, myPending.id))
+
+  // 检查是否还有 pending 节点
+  const remain = await db.select().from(approvalSteps).where(eq(approvalSteps.reimbursementId, id))
+  const stillPending = remain.filter((st) => st.action === 'pending')
+  if (stillPending.length === 0) {
+    // 全部通过 → 整单 approved
+    await db.update(reimbursements).set({ status: 'approved', updatedAt: new Date() }).where(eq(reimbursements.id, id))
+    return c.json({ code: 'SUCCESS', message: '审批全部通过', data: { id, status: 'approved' } })
+  }
+  // 还有同级或下级待批，保持 pending
+  return c.json({ code: 'SUCCESS', message: '已通过本环节，等待其他审批人', data: { id, status: 'pending' } })
+}
+
 // --- Schemas ---
 const createSchema = z.object({
   title: z.string().min(2, '标题至少 2 个字符'),
@@ -173,10 +230,7 @@ reimb.post(
     }
 
     if (data.submit) {
-      await db.insert(approvalSteps).values([
-        { reimbursementId: r.id, stepIndex: 0, actor: '部门负责人', role: 'manager', action: 'pending' },
-        { reimbursementId: r.id, stepIndex: 1, actor: '财务审核', role: 'finance', action: 'pending' },
-      ])
+      await initApprovalFlow(r.id)
     }
 
     return c.json({ code: 'SUCCESS', message: data.submit ? '已提交审批' : '草稿已保存', data: { id: r.id, code: r.code, status } }, 201)
@@ -300,20 +354,24 @@ reimb.post('/:id/submit', async (c) => {
   const rows = await db.select().from(reimbursements).where(eq(reimbursements.id, id)).limit(1)
   if (!rows[0]) return c.json({ code: 'NOT_FOUND', message: '报销单不存在' }, 404)
   if (rows[0].userId !== me.sub) return c.json({ code: 'FORBIDDEN', message: '无权操作' }, 403)
-  return transition(c, id, 'submit')
+  const t = await transition(c, id, 'submit')
+  // 提交后初始化审批流（若尚无审批节点）
+  const steps = await db.select().from(approvalSteps).where(eq(approvalSteps.reimbursementId, id))
+  if (steps.length === 0) await initApprovalFlow(id)
+  return t
 })
 
 reimb.post('/:id/approve', async (c) => {
   const me = currentUser(c)
   if (!isApprover(me.role)) return c.json({ code: 'FORBIDDEN', message: '无审批权限' }, 403)
-  return transition(c, c.req.param('id'), 'approve')
+  return applyApprovalAction(c, c.req.param('id'), 'approve')
 })
 
 reimb.post('/:id/reject', async (c) => {
   const me = currentUser(c)
   if (!isApprover(me.role)) return c.json({ code: 'FORBIDDEN', message: '无审批权限' }, 403)
   const body = await c.req.json().catch(() => ({}))
-  return transition(c, c.req.param('id'), 'reject', body.reason || body.comment || '未填写原因')
+  return applyApprovalAction(c, c.req.param('id'), 'reject', body.reason || body.comment || '未填写原因')
 })
 
 reimb.post('/:id/revoke', async (c) => {

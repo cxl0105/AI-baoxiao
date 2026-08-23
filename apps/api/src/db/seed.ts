@@ -7,7 +7,7 @@ interface SeedAccount {
   name: string
   phone: string
   email: string
-  role: 'admin' | 'finance' | 'employee'
+  role: 'admin' | 'gm' | 'finance' | 'manager' | 'employee'
   department: string
   password: string
 }
@@ -27,7 +27,9 @@ async function main() {
   // 2) 演示账号
   const accounts: SeedAccount[] = [
     { name: '管理员', phone: '13800000001', email: 'admin@example.com', role: 'admin', department: '管理层', password: '123456' },
+    { name: '总经理', phone: '13800000005', email: 'gm@example.com', role: 'gm', department: '管理层', password: '123456' },
     { name: '财务专员', phone: '13800000002', email: 'finance@example.com', role: 'finance', department: '财务部', password: '123456' },
+    { name: '部门主管', phone: '13800000006', email: 'manager@example.com', role: 'manager', department: '研发部', password: '123456' },
     { name: '员工小李', phone: '13800000003', email: 'employee@example.com', role: 'employee', department: '研发部', password: '123456' },
     { name: '演示用户', phone: '13800000004', email: 'demo@example.com', role: 'employee', department: '研发部', password: '123456' },
   ]
