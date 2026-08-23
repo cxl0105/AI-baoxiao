@@ -416,6 +416,16 @@ export const api = {
     if (data.code !== 'SUCCESS' || !data.data) throw new Error(data.message || '创建企业失败')
     return data.data
   },
+  async listPlans() {
+    const { data } = await instance.get<ApiResponse<any>>('/tenants/plans')
+    if (data.code !== 'SUCCESS' || !data.data) throw new Error(data.message || '获取套餐列表失败')
+    return data.data.plans
+  },
+  async setTenantPlan(id: string, plan: string) {
+    const { data } = await instance.patch<ApiResponse<any>>(`/tenants/${id}/plan`, { plan })
+    if (data.code !== 'SUCCESS') throw new Error(data.message || '切换套餐失败')
+    return data.data
+  },
   async deleteTenant(id: string) {
     const { data } = await instance.delete<ApiResponse<any>>(`/tenants/${id}`)
     if (data.code !== 'SUCCESS') throw new Error(data.message || '删除企业失败')

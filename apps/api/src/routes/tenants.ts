@@ -6,6 +6,7 @@ import { eq, desc, count, and, gte, sql } from 'drizzle-orm'
 import { db } from '../db'
 import { companies, users, reimbursements, reimbursementItems, budgets, companySettings } from '../db/schema'
 import { authMiddleware, currentUser, isPlatformAdmin } from '../lib/auth'
+import { PLANS, getPlan } from '../lib/plans'
 
 const tenant = new Hono()
 tenant.use('*', authMiddleware)
@@ -46,8 +47,10 @@ tenant.get('/', async (c) => {
       industry: comp.industry || '',
       scale: comp.scale || '',
       contactPhone: comp.contactPhone || '',
+      legalPerson: comp.legalPerson || '',
       createdAt: comp.createdAt,
       userCount: userRows.length,
+      plan: getPlan(comp.plan),
       admin: admins[0] ? { name: admins[0].name, phone: admins[0].phone } : null,
     })
   }
@@ -58,10 +61,10 @@ tenant.get('/', async (c) => {
 tenant.get('/me', async (c) => {
   const me = currentUser(c)
   if (!me.companyId) {
-    return c.json({ code: 'SUCCESS', data: { plan: 'pro', usedThisMonth: 0, limit: 0 } })
+    return c.json({ code: 'SUCCESS', data: { plan: getPlan('enterprise'), usedThisMonth: 0, memberCount: 0 } })
   }
   const compRows = await db.select().from(companies).where(eq(companies.id, me.companyId)).limit(1)
-  const plan = compRows[0]?.plan || 'free'
+  const planDef = getPlan(compRows[0]?.plan)
   const monthStart = new Date()
   monthStart.setDate(1)
   monthStart.setHours(0, 0, 0, 0)
@@ -71,8 +74,39 @@ tenant.get('/me', async (c) => {
     .innerJoin(reimbursements, eq(reimbursements.id, reimbursementItems.reimbursementId))
     .where(and(eq(reimbursements.companyId, me.companyId), gte(reimbursements.createdAt, monthStart)))
   const usedCount = Number(used[0]?.cnt || 0)
-  const limit = plan === 'free' ? 10 : 0
-  return c.json({ code: 'SUCCESS', data: { plan, usedThisMonth: usedCount, limit } })
+  const memberCount = await db
+    .select({ cnt: sql<number>`count(*)` })
+    .from(users)
+    .where(and(eq(users.companyId, me.companyId), eq(users.status, 'active')))
+  return c.json({
+    code: 'SUCCESS',
+    data: {
+      plan: planDef,
+      usedThisMonth: usedCount,
+      memberCount: Number(memberCount[0]?.cnt || 0),
+    },
+  })
+})
+
+// 平台管理员：切换企业套餐
+tenant.patch('/:id/plan', async (c) => {
+  const me = currentUser(c)
+  if (!isPlatformAdmin(me.role)) return c.json({ code: 'FORBIDDEN', message: '仅平台管理员可切换套餐' }, 403)
+  const id = c.req.param('id')
+  const body = await c.req.json().catch(() => ({}))
+  const planKey = body.plan
+  if (!PLANS.some((p) => p.key === planKey)) {
+    return c.json({ code: 'VALIDATION_ERROR', message: '无效的套餐等级' }, 400)
+  }
+  const rows = await db.select().from(companies).where(eq(companies.id, id)).limit(1)
+  if (!rows[0]) return c.json({ code: 'NOT_FOUND', message: '企业不存在' }, 404)
+  await db.update(companies).set({ plan: planKey }).where(eq(companies.id, id))
+  return c.json({ code: 'SUCCESS', message: `已切换为「${getPlan(planKey).name}」`, data: { plan: getPlan(planKey) } })
+})
+
+// 套餐列表（前端展示用）
+tenant.get('/plans', async (c) => {
+  return c.json({ code: 'SUCCESS', data: { plans: PLANS } })
 })
 
 // 平台管理员：新增企业，自动生成 4 类账号（管理员/总经理/财务/部门经理），密码 123456

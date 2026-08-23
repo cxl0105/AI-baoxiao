@@ -5,6 +5,7 @@ import { eq, desc, inArray, and, gte, sql } from 'drizzle-orm'
 import { db } from '../db'
 import { reimbursements, reimbursementItems, invoices, approvalSteps, users, companies } from '../db/schema'
 import { authMiddleware, currentUser, isAdminOrFinance, isApprover, canPay } from '../lib/auth'
+import { getPlan } from '../lib/plans'
 
 const reimb = new Hono()
 reimb.use('*', authMiddleware)
@@ -199,10 +200,10 @@ reimb.post(
     const amount = data.totalAmount ?? items.reduce((s, it) => s + (it.amount || 0), 0)
     const status = data.submit ? 'pending' : 'draft'
 
-    // --- 免费版发票配额校验：按企业计，每月免费 10 张发票（报销明细） ---
+    // --- 发票配额校验：仅免费版限额（每月 10 张），付费版不限 ---
     const compRows = await db.select().from(companies).where(eq(companies.id, me.companyId)).limit(1)
-    const plan = compRows[0]?.plan || 'free'
-    if (plan === 'free') {
+    const planDef = getPlan(compRows[0]?.plan)
+    if (planDef.monthlyInvoiceLimit !== null) {
       const monthStart = new Date()
       monthStart.setDate(1)
       monthStart.setHours(0, 0, 0, 0)
@@ -212,9 +213,10 @@ reimb.post(
         .innerJoin(reimbursements, eq(reimbursements.id, reimbursementItems.reimbursementId))
         .where(and(eq(reimbursements.companyId, me.companyId), gte(reimbursements.createdAt, monthStart)))
       const usedCount = Number(used[0]?.cnt || 0)
-      if (usedCount + items.length > 10) {
+      const limit = planDef.monthlyInvoiceLimit
+      if (usedCount + items.length > limit) {
         return c.json(
-          { code: 'QUOTA_EXCEEDED', message: `本月免费额度已用完（免费版每月 10 张发票，已用 ${usedCount} 张，本次 ${items.length} 张）。请升级付费版或下月再试。` },
+          { code: 'QUOTA_EXCEEDED', message: `本月免费额度已用完（免费版每月 ${limit} 张发票，已用 ${usedCount} 张，本次 ${items.length} 张）。请升级付费版或下月再试。` },
           403
         )
       }

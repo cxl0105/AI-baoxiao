@@ -29,6 +29,7 @@ interface Tenant {
   contactPhone: string
   createdAt: string
   userCount: number
+  plan?: { key: string; name: string; priceLabel: string }
   admin: { name: string; phone: string } | null
 }
 
@@ -45,6 +46,7 @@ export default function TenantsPage() {
   const [form, setForm] = useState({ name: '', taxNo: '', fullName: '', industry: '', scale: '', contactPhone: '', legalPerson: '', adminName: '', adminPhone: '' })
   const [submitting, setSubmitting] = useState(false)
   const [result, setResult] = useState<null | { company: any; accounts: any[] }>(null)
+  const [plans, setPlans] = useState<any[]>([])
 
   const canManage = hasPermission(user?.role, 'tenants:manage')
 
@@ -54,6 +56,7 @@ export default function TenantsPage() {
     try {
       const res = await api.listTenants()
       setList(res.list || [])
+      api.listPlans().then((p) => setPlans(p)).catch(() => {})
     } catch (e) {
       setError(formatApiError(e))
     } finally {
@@ -109,6 +112,15 @@ export default function TenantsPage() {
       setError(formatApiError(e))
     } finally {
       setSubmitting(false)
+    }
+  }
+
+  const changePlan = async (t: Tenant, planKey: string) => {
+    try {
+      await api.setTenantPlan(t.id, planKey)
+      await load()
+    } catch (e) {
+      setError(formatApiError(e))
     }
   }
 
@@ -193,7 +205,19 @@ export default function TenantsPage() {
             <div key={t.id} className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-5 hover:shadow-md transition-shadow">
               <div className="flex items-start justify-between gap-2 mb-3">
                 <div className="min-w-0">
-                  <h3 className="font-semibold text-slate-900 dark:text-white truncate">{t.name}</h3>
+                  <div className="flex items-center gap-2">
+                    <h3 className="font-semibold text-slate-900 dark:text-white truncate">{t.name}</h3>
+                    {t.plan && (
+                      <span className={`inline-flex items-center px-2 py-0.5 text-[11px] font-medium rounded-full flex-shrink-0 ${
+                        t.plan.key === 'free' ? 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300'
+                        : t.plan.key === 'basic' ? 'bg-sky-100 text-sky-700 dark:bg-sky-900/30 dark:text-sky-300'
+                        : t.plan.key === 'pro' ? 'bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-300'
+                        : 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300'
+                      }`}>
+                        {t.plan.name}
+                      </span>
+                    )}
+                  </div>
                   {t.fullName && <p className="text-xs text-slate-400 truncate mt-0.5">{t.fullName}</p>}
                 </div>
                 <button
@@ -211,6 +235,18 @@ export default function TenantsPage() {
                   <p className="flex items-center gap-1.5"><Phone className="w-3.5 h-3.5" /> 管理员：{t.admin.name}（{t.admin.phone}）</p>
                 )}
                 <p className="flex items-center gap-1.5"><Users className="w-3.5 h-3.5" /> {t.userCount} 个账号</p>
+                <div className="flex items-center gap-1.5 pt-1 border-t border-slate-100 dark:border-slate-800 mt-1.5">
+                  <span className="text-slate-400">套餐：</span>
+                  <select
+                    value={t.plan?.key || 'free'}
+                    onChange={(e) => changePlan(t, e.target.value)}
+                    className="flex-1 px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs text-slate-700 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-brand-500/20"
+                  >
+                    {plans.map((p) => (
+                      <option key={p.key} value={p.key}>{p.name}（{p.priceLabel}）</option>
+                    ))}
+                  </select>
+                </div>
               </div>
             </div>
           ))}
