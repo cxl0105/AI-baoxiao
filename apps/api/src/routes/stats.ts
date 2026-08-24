@@ -23,6 +23,21 @@ stats.get('/', async (c) => {
   const isAppr = isApprover(me.role)
   const cid = me.companyId
 
+  // 平台管理员（不属于任何企业）：无企业数据，直接返回空统计，避免 company_id='' 触发 uuid 解析错误
+  if (!cid) {
+    return c.json({
+      code: 'SUCCESS',
+      data: {
+        my: { monthTotal: 0, pendingCount: 0, approvedCount: 0, rejectedCount: 0, recent: [] },
+        approval: { pendingCount: 0, pendingAmount: 0, processedThisMonth: 0, overdueCount: 0, pendingList: [] },
+        monthlyTrend: lastMonths(6).map((month) => ({ month, amount: 0 })),
+        departmentStats: [],
+        activeMembers: 0,
+        companyMonthTotal: 0,
+      },
+    })
+  }
+
   // ---- 员工个人统计 ----
   const myRes = await pool.query(
     `SELECT
