@@ -71,7 +71,7 @@ app.use(
   '*',
   cors({
     origin: process.env.NODE_ENV === 'production'
-      ? ['https://your-domain.com']
+      ? ['https://www.aibaoxiao.top', 'https://aibaoxiao.top', 'https://demo.aibaoxiao.top']
       : ['http://localhost:3000', 'http://localhost:5173'],
     allowHeaders: ['Content-Type', 'Authorization'],
     allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
