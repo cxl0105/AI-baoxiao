@@ -146,7 +146,20 @@ tenant.post(
       .returning()
 
     // 2) 自动生成 4 类账号（初始手机号 = adminPhone；其余角色用占位手机号，后续可改）
-    const hash = await bcrypt.hash('123456', 10)
+    // 🔧 修复：不再使用统一弱密码 123456，改为每企业随机强密码
+    function genStrongPassword(len = 12): string {
+      const upper = 'ABCDEFGHJKLMNPQRSTUVWXYZ'
+      const lower = 'abcdefghijkmnpqrstuvwxyz'
+      const digit = '23456789'
+      const all = upper + lower + digit
+      let pwd = upper[Math.floor(Math.random() * upper.length)]
+                + lower[Math.floor(Math.random() * lower.length)]
+                + digit[Math.floor(Math.random() * digit.length)]
+      for (let i = 3; i < len; i++) pwd += all[Math.floor(Math.random() * all.length)]
+      return pwd.split('').sort(() => Math.random() - 0.5).join('')
+    }
+    const defaultPwd = genStrongPassword()
+    const hash = await bcrypt.hash(defaultPwd, 12)
     // 生成不冲突的占位手机号
     const accounts = [
       { name: data.adminName || '企业管理员', role: 'admin', phone: data.adminPhone },
@@ -179,13 +192,13 @@ tenant.post(
           department: a.role === 'manager' ? '综合部' : a.role === 'finance' ? '财务部' : a.role === 'gm' ? '管理层' : '管理层',
         })
         .returning()
-      createdUsers.push({ id: u.id, name: u.name, role: u.role, phone: u.phone })
+      createdUsers.push({ id: u.id, name: u.name, role: u.role, phone: u.phone, password: defaultPwd })
     }
 
     return c.json(
       {
         code: 'SUCCESS',
-        message: '企业已创建，账号已自动生成（密码均为 123456）',
+        message: '企业已创建，初始密码已生成（请妥善保存，首次登录后请立即修改）',
         data: { company: { id: comp.id, name: comp.name, taxNo: comp.taxNo }, accounts: createdUsers },
       },
       201

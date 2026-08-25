@@ -4,7 +4,12 @@ import { users } from './schema'
 import { eq } from 'drizzle-orm'
 
 async function main() {
-  const hash = await bcrypt.hash('123456', 10)
+  const pwd = process.env.PLATFORM_ADMIN_PASSWORD
+  if (!pwd || pwd.length < 8) {
+    console.error('[FATAL] 必须设置环境变量 PLATFORM_ADMIN_PASSWORD（≥8位）后才能初始化平台管理员。')
+    process.exit(1)
+  }
+  const hash = await bcrypt.hash(pwd, 12) // 强度 10 → 12
   await db.delete(users).where(eq(users.phone, '13900000000'))
   const [u] = await db.insert(users).values({
     companyId: null,

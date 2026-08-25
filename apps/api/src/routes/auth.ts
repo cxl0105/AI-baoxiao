@@ -8,6 +8,24 @@ import { users, companies } from '../db/schema'
 import { signToken, authMiddleware, currentUser } from '../lib/auth'
 import { sendVerificationCodeEmail, mailConfigured } from '../lib/mailer'
 
+// 🔧 登录失败限速（内存版，单进程 tsx 足够；集群/多实例部署请换 Redis）
+const loginFails = new Map<string, { count: number; lockUntil: number }>()
+const MAX_FAILS = 5
+const LOCK_MS = 15 * 60 * 1000
+function checkLoginLock(key: string) {
+  const e = loginFails.get(key)
+  if (!e) return { locked: false as const }
+  if (Date.now() < e.lockUntil) return { locked: true as const, retryAfter: Math.ceil((e.lockUntil - Date.now()) / 1000) }
+  return { locked: false as const }
+}
+function registerFail(key: string) {
+  const e = loginFails.get(key) || { count: 0, lockUntil: 0 }
+  e.count += 1
+  if (e.count >= MAX_FAILS) e.lockUntil = Date.now() + LOCK_MS
+  loginFails.set(key, e)
+}
+function clearFail(key: string) { loginFails.delete(key) }
+
 const auth = new Hono()
 
 // --- 邮箱验证码存储（内存 Map，10 分钟过期；单进程 tsx 足够，重启后需重新发送） ---
@@ -69,6 +87,10 @@ auth.post(
   async (c) => {
     const { identifier, password } = c.req.valid('json')
     const key = identifier.trim().toLowerCase()
+    const clientIp = (c.req.header('x-forwarded-for')?.split(',')[0].trim()) || 'unknown'
+    const lockKey = clientIp + '|' + key
+    const lk = checkLoginLock(lockKey)
+    if (lk.locked) return c.json({ code: 'LOCKED', message: `尝试次数过多，请 ${lk.retryAfter} 秒后再试` }, 429)
     const rows = await db
       .select()
       .from(users)
@@ -77,7 +99,7 @@ auth.post(
     const u = rows[0]
     if (!u) return c.json({ code: 'AUTH_FAILED', message: '账号或密码错误' }, 401)
     const ok = await bcrypt.compare(password, u.passwordHash)
-    if (!ok) return c.json({ code: 'AUTH_FAILED', message: '账号或密码错误' }, 401)
+    if (!ok) { registerFail(lockKey); return c.json({ code: 'AUTH_FAILED', message: '账号或密码错误' }, 401) }
     // 审批状态拦截：待审批/禁用账号不可登录
     if (u.status === 'pending') {
       return c.json({ code: 'PENDING_APPROVAL', message: '您的注册申请正在等待企业管理员审批，请稍后再试' }, 403)
@@ -85,6 +107,7 @@ auth.post(
     if (u.status === 'disabled') {
       return c.json({ code: 'ACCOUNT_DISABLED', message: '账号已被禁用，请联系企业管理员' }, 403)
     }
+    clearFail(lockKey)
     const token = signToken({ sub: u.id, role: u.role, name: u.name })
     // 附带企业基础信息
     let companyInfo: any = null
