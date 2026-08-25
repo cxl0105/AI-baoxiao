@@ -4,7 +4,16 @@ import { db } from '../db'
 import { users } from '../db/schema'
 import { eq } from 'drizzle-orm'
 
-const SECRET = process.env.JWT_SECRET || 'dev-secret-change-me'
+// 🔧 修复：生产环境禁止兜底弱密钥，缺失即启动失败（fail-fast）
+const SECRET = (() => {
+  const v = process.env.JWT_SECRET
+  if (v && v.length >= 16) return v
+  if (process.env.NODE_ENV === 'production') {
+    throw new Error('[FATAL] JWT_SECRET 未配置或长度不足16位，生产环境已拒绝启动。')
+  }
+  console.warn('[WARN] 未配置安全的 JWT_SECRET，使用开发占位密钥，禁止用于生产！')
+  return 'dev-only-insecure-secret-change-me'
+})()
 
 export interface JwtPayload {
   sub: string
